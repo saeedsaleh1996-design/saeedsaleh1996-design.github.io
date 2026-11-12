@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FindIt</title>
+<meta name="description" content="FindIt — keep track of what is stored in each box, tote or container. Scan a QR code to see what is inside.">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/assets/findit-180-znL7ayLR.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/findit-32-DQdhyb5t.png">
+<meta name="theme-color" content="#00317e">
+<link rel="stylesheet" href="/i18n.css?v=7">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js" defer></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js" defer></script>
+<script src="/translations.js?v=7" defer></script>
+<script src="/i18n.js?v=7" defer></script>
+<script src="config.js?v=7" defer></script>
+<script src="app.js?v=7" defer></script>
+<script src="/install.js" defer></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CqMq3Bln.css">
+</head>
+<body>
+<header class="app-header">
+  <button id="btn-back" type="button" aria-label="Back">&#8592;</button>
+  <span class="app-logo" aria-hidden="true"><img src="/assets/findit-192-Dnj1zeDI.png" class="app-logo-img" alt=""></span>
+  <h1 id="app-title">FindIt</h1>
+</header>
+
+<main>
+  <!-- Shown when the Supabase values have not been filled in yet -->
+  <section class="screen" id="screen-setup" hidden>
+    <h2>Setup needed</h2>
+    <p>This app is not connected to its shared database yet.</p>
+    <p>Open <strong>config.js</strong> in the app folder and fill in
+    <strong>SUPABASE_URL</strong> and <strong>SUPABASE_ANON_KEY</strong> from the
+    Supabase project dashboard (Project Settings &rarr; API). Then reload this page.</p>
+  </section>
+
+  <!-- Shown when a library failed to load -->
+  <section class="screen" id="screen-load-error" hidden>
+    <h2>Could not load the app</h2>
+    <p id="load-error-text">A needed file did not load. Check your connection and reload the page.</p>
+    <button type="button" class="primary" onclick="location.reload()">Reload</button>
+  </section>
+
+  <!-- Login -->
+  <section class="screen" id="screen-login" hidden>
+    <div class="center" style="margin-top:24px"><img src="/assets/findit-192-Dnj1zeDI.png" class="login-logo" alt="FindIt logo"></div>
+    <h2 class="center" id="login-title">Sign in</h2>
+    <p id="login-sub">Sign in with your own account. Everyone sees only their own containers.</p>
+    <form id="form-login">
+      <label for="login-email">Email</label>
+      <input id="login-email" type="email" autocomplete="username" required>
+      <label for="login-password">Password</label>
+      <input id="login-password" type="password" autocomplete="current-password" required>
+      <p class="small-text muted">Each person has their own login and sees only their own containers.</p>
+      <div class="stack mt">
+        <button type="submit" class="primary" id="btn-login-submit">Sign in</button>
+        <button type="button" id="btn-toggle-auth">Create an account</button>
+      </div>
+      <p id="login-error" class="banner" hidden></p>
+      <p id="login-info" class="notice" hidden></p>
+    </form>
+  </section>
+
+  <!-- Home / containers list -->
+  <section class="screen" id="screen-home" hidden>
+    <div id="home-error" class="banner" hidden></div>
+    <div id="getting-started" class="gs-card" hidden>
+      <h3>Getting Started</h3>
+      <button type="button" class="gs-inner" id="btn-gs-create">
+        <span class="gs-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg></span>
+        <span class="gs-text">
+          <strong>Add Your First Storage</strong>
+          <span>Organize your items by adding a box, tote or container and adding your inventory.</span>
+        </span>
+      </button>
+      <div class="gs-checklist">
+        <span class="gs-check"><span class="circle"></span>Add container photo</span>
+        <span class="gs-check"><span class="circle"></span>Add item details</span>
+        <span class="gs-check"><span class="circle"></span>Assign QR code</span>
+      </div>
+    </div>
+    <button type="button" id="btn-new-container" class="primary full">+ Add new storage</button>
+    <h2>Containers</h2>
+    <div id="home-empty" class="empty-state" hidden>
+      <svg class="empty-art" viewBox="0 0 200 170" fill="none" stroke="#a8b6c2" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M50 78 L100 104 L150 78 V132 L100 158 L50 132 Z"/><path d="M50 78 L100 104 L150 78"/><path d="M50 78 L28 46 L76 24 L100 56"/><path d="M150 78 L172 46 L124 24 L100 56"/><path d="M100 104 V158"/></svg>
+      <p class="empty-title">No Containers Yet</p>
+      <p class="empty-sub">Add your first box, tote or container to start building your storage.</p>
+      <div class="stack">
+        <button type="button" class="primary" id="btn-empty-new">Add new storage</button>
+        <button type="button" id="btn-empty-scan">Scan a code</button>
+      </div>
+    </div>
+    <ul class="list" id="containers-list"></ul>
+    <p class="small-text muted mt" id="home-count"></p>
+  </section>
+
+  <!-- Scan -->
+  <section class="screen" id="screen-scan" hidden>
+    <h2 class="center">Scan a QR code</h2>
+    <p class="scan-guide">Point the camera at the QR code on a container or a shelf.</p>
+    <div id="reader"></div>
+    <p id="scan-status" class="scan-frame-note muted"></p>
+    <div id="scan-camera-error" class="banner" hidden>
+      <p><strong>The camera could not start.</strong></p>
+      <p>Camera permission is needed to scan. Allow the camera for this page, then try again.</p>
+      <button type="button" class="primary" id="btn-scan-retry">Try the camera again</button>
+    </div>
+    <div class="stack mt">
+      <button type="button" id="btn-torch" hidden>Turn light on</button>
+      <button type="button" id="btn-scan-photo">Take a photo of the code</button>
+      <input type="file" id="input-scan-photo" accept="image/*" hidden>
+      <button type="button" id="btn-scan-again" hidden>Scan again</button>
+    </div>
+    <p class="small-text muted">The camera starts on its own when you open this screen. The light stays off unless you turn it on.</p>
+  </section>
+
+  <!-- Scanned code is not linked to any container -->
+  <section class="screen" id="screen-unknown-code" hidden>
+    <h2>Code not linked yet</h2>
+    <p>This code is not linked to a container yet.</p>
+    <div class="stack mt">
+      <button type="button" class="primary" id="btn-create-for-code">Add storage for this code</button>
+      <button type="button" id="btn-unknown-scan-again">Scan again</button>
+      <button type="button" id="btn-unknown-home">Back to containers</button>
+    </div>
+  </section>
+
+  <!-- Container view -->
+  <section class="screen" id="screen-container" hidden>
+    <div class="row space-between">
+      <h2 id="container-name" dir="auto"></h2>
+      <span class="color-dot" id="container-color-dot" title="Label colour"></span>
+    </div>
+    <p class="muted"><span id="container-location" dir="auto"></span></p>
+    <p class="muted" id="container-type-line">Type: <strong id="container-type"></strong></p>
+    <p class="muted" id="container-shelf-line">Shelf: <strong id="container-shelf"></strong></p>
+    <p id="container-note" dir="auto"></p>
+    <p class="small-text">Code: <strong id="container-code"></strong></p>
+    <div id="container-photo-wrap"></div>
+    <div class="row mt">
+      <button type="button" id="btn-add-item" class="primary">+ Add item</button>
+      <button type="button" id="btn-container-label">QR label</button>
+      <button type="button" id="btn-edit-container">Edit</button>
+      <button type="button" id="btn-delete-container" class="danger">Delete</button>
+    </div>
+    <h3>Inside this container</h3>
+    <div id="container-empty" class="empty-state" hidden>
+      <svg class="empty-art" viewBox="0 0 200 170" fill="none" stroke="#a8b6c2" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M50 78 L100 104 L150 78 V132 L100 158 L50 132 Z"/><path d="M50 78 L100 104 L150 78"/><path d="M50 78 L28 46 L76 24 L100 56"/><path d="M150 78 L172 46 L124 24 L100 56"/><path d="M100 104 V158"/></svg>
+      <p class="empty-title">Nothing in here yet</p>
+      <p class="empty-sub">Tap “+ Add item” to put the first thing in.</p>
+    </div>
+    <ul class="list" id="items-list"></ul>
+  </section>
+
+  <!-- Item details -->
+  <section class="screen" id="screen-item" hidden>
+    <h2 id="item-title" dir="auto"></h2>
+    <div id="item-photo-wrap"></div>
+    <div class="detail-grid">
+      <div class="field-label">Quantity</div>
+      <div class="qty-stepper">
+        <button type="button" id="btn-qty-minus" aria-label="Take one out">&minus;</button>
+        <input type="number" id="item-qty" min="0" step="1" inputmode="numeric" aria-label="Quantity">
+        <button type="button" id="btn-qty-plus" aria-label="Add one">+</button>
+      </div>
+      <div class="field-label">Description</div>
+      <div class="field-value" id="item-description" dir="auto"></div>
+      <div class="field-label">Category</div>
+      <div class="field-value" id="item-category" dir="auto"></div>
+      <div class="field-label">Container</div>
+      <div class="field-value" id="item-container" dir="auto"></div>
+      <div class="field-label">Keyword tags</div>
+      <div class="field-value" id="item-tags"></div>
+      <div class="field-label">Voice note</div>
+      <div class="field-value" id="item-voice-wrap">
+        <audio id="item-voice-player" controls hidden></audio>
+        <p id="item-voice-none" class="muted">No voice note yet.</p>
+        <div class="row mt">
+          <button type="button" id="btn-item-voice-record">🎙 Record voice note</button>
+          <button type="button" id="btn-item-voice-delete" class="danger" hidden>Delete voice note</button>
+        </div>
+        <p id="item-voice-status" class="small-text muted"></p>
+      </div>
+    </div>
+    <div class="stack mt">
+      <button type="button" id="btn-edit-item" class="primary">Edit item</button>
+      <button type="button" id="btn-remove-item" class="danger">Remove this item</button>
+    </div>
+  </section>
+
+  <!-- Add / edit item -->
+  <section class="screen" id="screen-item-form" hidden>
+    <h2 id="item-form-title" class="center">Add an item</h2>
+    <div class="steps" id="item-pack-steps" aria-label="Pack steps">
+      <div class="steps-track">
+        <div class="step" data-step="1"><span class="step-circle">1</span><span class="step-label">Upload Image</span></div>
+        <div class="step" data-step="2"><span class="step-circle">2</span><span class="step-label">Add Meta</span></div>
+        <div class="step" data-step="3"><span class="step-circle">3</span><span class="step-label">Assign QR code</span></div>
+      </div>
+    </div>
+    <form id="form-item">
+      <div id="item-photo-preview-wrap" hidden>
+        <img id="item-photo-preview" class="photo-preview" alt="Item photo preview">
+      </div>
+      <div class="photo-pick-row">
+        <button type="button" id="btn-photo-camera" class="photo-pick"><span class="plus">+</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.2"/></svg>Take a photo</button>
+        <button type="button" id="btn-photo-gallery" class="photo-pick"><span class="plus">+</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m5 17 4.5-4.5 3 3L16 12l3 3"/></svg>Choose from photos</button>
+      </div>
+      <div class="row mt">
+        <button type="button" id="btn-photo-remove" class="danger" hidden>Remove photo</button>
+      </div>
+      <div class="row mt" id="ai-suggest-wrap" hidden>
+        <button type="button" id="btn-ai-suggest" class="accent">✦ Suggest title &amp; category</button>
+        <span id="ai-suggest-status" class="small-text muted"></span>
+      </div>
+      <input type="file" id="input-photo-camera" accept="image/*" capture="environment" hidden>
+      <input type="file" id="input-photo-gallery" accept="image/*" hidden>
+
+      <label for="item-title-input">Title <span class="hint">Required. May be in Arabic.</span></label>
+      <input id="item-title-input" type="text" dir="auto" required maxlength="200">
+
+      <label for="item-desc-input">Description <span class="hint">Optional. May be in Arabic.</span></label>
+      <div class="field-with-mic">
+        <textarea id="item-desc-input" dir="auto" maxlength="1000"></textarea>
+        <button type="button" id="btn-desc-dictate" class="dictate-btn" aria-label="Dictate description" title="Tap and speak to type">🎙</button>
+      </div>
+
+      <div class="voice-note-box">
+        <label>Voice note <span class="hint">Optional. Speak what's inside instead of typing.</span></label>
+        <audio id="item-form-voice-player" controls hidden></audio>
+        <div class="row">
+          <button type="button" id="btn-item-form-voice-record">🎙 Record voice note</button>
+          <button type="button" id="btn-item-form-voice-delete" class="danger" hidden>Delete voice note</button>
+        </div>
+        <p id="item-form-voice-status" class="small-text muted"></p>
+      </div>
+
+      <label for="item-qty-input">Quantity</label>
+      <div class="qty-stepper">
+        <button type="button" id="btn-form-qty-minus" aria-label="Less">&minus;</button>
+        <input type="number" id="item-qty-input" min="1" step="1" value="1" inputmode="numeric">
+        <button type="button" id="btn-form-qty-plus" aria-label="More">+</button>
+      </div>
+
+      <label for="item-category-select">Category <span class="hint">Required. Pick one, or make a new one on the spot.</span></label>
+      <select id="item-category-select"></select>
+      <div id="new-category-wrap" hidden>
+        <label for="item-new-category">New category name</label>
+        <input id="item-new-category" type="text" dir="auto" maxlength="80" placeholder="e.g. Tools">
+      </div>
+
+      <label for="item-container-select">Container</label>
+      <select id="item-container-select"></select>
+
+      <label for="item-tags-input">Keyword tags <span class="hint">Optional. Separate tags with commas. Tapping a tag later searches for it.</span></label>
+      <input id="item-tags-input" type="text" dir="auto" maxlength="300" placeholder="e.g. kitchen, spare, winter">
+
+      <p id="item-form-error" class="banner" hidden></p>
+      <div class="stack mt">
+        <button type="submit" class="primary" id="btn-save-item">Save item</button>
+        <button type="button" id="btn-cancel-item">Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Add / edit container -->
+  <section class="screen" id="screen-container-form" hidden>
+    <h2 id="container-form-title" class="center">New container</h2>
+    <div class="steps" id="container-pack-steps" aria-label="Pack steps">
+      <div class="steps-track">
+        <div class="step" data-step="1"><span class="step-circle">1</span><span class="step-label">Upload Image</span></div>
+        <div class="step" data-step="2"><span class="step-circle">2</span><span class="step-label">Add Meta</span></div>
+        <div class="step" data-step="3"><span class="step-circle">3</span><span class="step-label">Assign QR code</span></div>
+      </div>
+    </div>
+    <form id="form-container">
+      <div id="container-photo-preview-wrap" hidden>
+        <img id="container-photo-preview" class="photo-preview" alt="Container photo preview">
+      </div>
+      <div class="photo-pick-row">
+        <button type="button" id="btn-container-photo-camera" class="photo-pick"><span class="plus">+</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.2"/></svg>Take a photo</button>
+        <button type="button" id="btn-container-photo-gallery" class="photo-pick"><span class="plus">+</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m5 17 4.5-4.5 3 3L16 12l3 3"/></svg>Choose from photos</button>
+      </div>
+      <div class="row mt">
+        <button type="button" id="btn-container-photo-remove" class="danger" hidden>Remove photo</button>
+      </div>
+      <input type="file" id="input-container-photo-camera" accept="image/*" capture="environment" hidden>
+      <input type="file" id="input-container-photo-gallery" accept="image/*" hidden>
+
+      <div id="container-code-source">
+        <label>QR code for this container</label>
+        <div class="radio-card">
+          <input type="radio" id="code-source-generate" name="code-source" value="generate" checked>
+          <label for="code-source-generate" class="radio-text" style="margin:0">Make me a QR code
+            <span class="radio-sub">The app creates a new code and a printable label for this container.</span>
+          </label>
+        </div>
+        <div class="radio-card">
+          <input type="radio" id="code-source-sticker" name="code-source" value="sticker">
+          <label for="code-source-sticker" class="radio-text" style="margin:0">I already have a sticker
+            <span class="radio-sub">Scan the QR sticker already on the container. The scanned code is saved as this container&rsquo;s code.</span>
+          </label>
+        </div>
+        <div id="sticker-scan-wrap" hidden>
+          <p id="sticker-scan-status" class="notice">No sticker scanned yet. Tap below to scan it with the camera.</p>
+          <button type="button" id="btn-scan-sticker">Scan the sticker</button>
+        </div>
+      </div>
+
+      <label for="container-name-input">Name <span class="hint">Required.</span></label>
+      <input id="container-name-input" type="text" dir="auto" required maxlength="120">
+
+      <label>Type <span class="hint">What is this storage? Pick one.</span></label>
+      <div class="radio-row" id="container-type-pick" role="group" aria-label="Storage type">
+        <label class="radio-chip"><input type="radio" name="container-type" value="Box"> Box</label>
+        <label class="radio-chip"><input type="radio" name="container-type" value="Tote"> Tote</label>
+        <label class="radio-chip"><input type="radio" name="container-type" value="Container" checked> Container</label>
+      </div>
+
+      <label for="container-shelf-select">Shelf <span class="hint">Optional. Pick a shelf to put it on, or leave it blank.</span></label>
+      <select id="container-shelf-select"></select>
+
+      <label for="container-location-input">Location <span class="hint">Where the container is kept, e.g. Garage shelf 2.</span></label>
+      <input id="container-location-input" type="text" dir="auto" maxlength="120">
+
+      <label for="container-note-input">Note <span class="hint">Optional.</span></label>
+      <textarea id="container-note-input" dir="auto" maxlength="500"></textarea>
+
+      <label>Label colour</label>
+      <div class="color-pick" id="color-pick" role="group" aria-label="Label colour"></div>
+
+      <p id="container-form-error" class="banner" hidden></p>
+      <div class="stack mt">
+        <button type="submit" class="primary" id="btn-save-container">Add storage</button>
+        <button type="button" id="btn-cancel-container">Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Search / Browse -->
+  <section class="screen" id="screen-search" hidden>
+    <h2 class="center">Browse</h2>
+    <div class="search-bar">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+        <input id="search-input" type="text" dir="auto" placeholder="Search by keywords, name, label, etc." autocomplete="off" aria-label="Search all containers">
+      </div>
+      <button type="button" id="btn-search-filter" class="filter-btn" aria-label="Browse by category"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16"/><circle cx="9" cy="7" r="2.4"/><path d="M4 17h16"/><circle cx="15" cy="17" r="2.4"/></svg></button>
+    </div>
+    <p class="section-label">Browse by category</p>
+    <div id="search-categories" class="chip-row"></div>
+    <p class="small-text muted">Every word you type must appear in the item&rsquo;s title, description, category, or tags — in any order. Searching a category name shows everything in that category.</p>
+    <div id="search-idle" class="empty-state">
+      <svg class="empty-art" viewBox="0 0 200 200" fill="none" stroke="#a8b6c2" stroke-width="12" stroke-linecap="round" aria-hidden="true"><circle cx="88" cy="88" r="52"/><path d="M125 125 L162 162"/></svg>
+      <p class="empty-title">Search your storage</p>
+      <p class="empty-sub">Type a word to find an item in any container.</p>
+    </div>
+    <div id="search-empty" class="empty-state" hidden>
+      <svg class="empty-art" viewBox="0 0 200 200" fill="none" stroke="#a8b6c2" stroke-width="12" stroke-linecap="round" aria-hidden="true"><circle cx="88" cy="88" r="52"/><path d="M125 125 L162 162"/></svg>
+      <p class="empty-title">No matching results</p>
+      <p class="empty-sub">Try again using different words.</p>
+    </div>
+    <p id="search-status" class="mt"></p>
+    <ul class="list" id="search-results"></ul>
+  </section>
+
+  <!-- Browse by category -->
+  <section class="screen" id="screen-categories" hidden>
+    <h2>Browse by category</h2>
+    <div id="categories-empty" class="empty-state" hidden>
+      <svg class="empty-art" viewBox="0 0 200 170" fill="none" stroke="#a8b6c2" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M50 78 L100 104 L150 78 V132 L100 158 L50 132 Z"/><path d="M50 78 L100 104 L150 78"/><path d="M50 78 L28 46 L76 24 L100 56"/><path d="M150 78 L172 46 L124 24 L100 56"/><path d="M100 104 V158"/></svg>
+      <p class="empty-title">No categories yet</p>
+      <p class="empty-sub">Categories appear when you add items.</p>
+    </div>
+    <ul class="list" id="categories-list"></ul>
+  </section>
+
+  <!-- Items in one category -->
+  <section class="screen" id="screen-category-items" hidden>
+    <h2 id="category-items-title" dir="auto"></h2>
+    <ul class="list" id="category-items-list"></ul>
+  </section>
+
+  <!-- Print label -->
+  <section class="screen" id="screen-label" hidden>
+    <h2 class="center">QR label</h2>
+    <div class="label-sheet" id="label-sheet">
+      <div class="label-qr" id="label-qr"></div>
+      <div class="label-name" id="label-name" dir="auto"></div>
+      <div class="label-code" id="label-code"></div>
+    </div>
+    <p class="small-text muted" id="label-note">Cut the label out and stick it on top of the container. Re-printing always gives the same code.</p>
+    <div class="stack mt">
+      <button type="button" class="primary" id="btn-download-label">Download label</button>
+      <button type="button" id="btn-print-label">Print label</button>
+    </div>
+  </section>
+
+  <!-- All items (from Settings) -->
+  <section class="screen" id="screen-all-items" hidden>
+    <h2>All items</h2>
+    <div class="stack">
+      <button type="button" id="btn-all-items-search" class="primary">🔍 Search items</button>
+    </div>
+    <div id="all-items-empty" class="empty-state" hidden>
+      <p class="empty-title">No items yet</p>
+      <p class="empty-sub">Add an item to a container and it will show up here.</p>
+    </div>
+    <ul class="list mt" id="all-items-list"></ul>
+  </section>
+
+  <!-- Shelves -->
+  <section class="screen" id="screen-shelves" hidden>
+    <h2>Shelves</h2>
+    <p class="muted">Each shelf has its own QR label. Scan a shelf label to see the containers on it. A shelf label prints once — pick the shelf when you add a container.</p>
+    <div class="stack">
+      <button type="button" id="btn-new-shelf" class="primary">+ Add a shelf</button>
+    </div>
+    <div id="shelves-empty" class="empty-state" hidden>
+      <p class="empty-title">No shelves yet</p>
+      <p class="empty-sub">Add a shelf to start putting containers on it.</p>
+    </div>
+    <ul class="list mt" id="shelves-list"></ul>
+  </section>
+
+  <!-- Shelf detail -->
+  <section class="screen" id="screen-shelf" hidden>
+    <h2 id="shelf-name" dir="auto"></h2>
+    <p class="small-text">Code: <strong id="shelf-code"></strong></p>
+    <div class="voice-note-box">
+      <label>Voice note <span class="hint">Optional. Speak what's on this shelf.</span></label>
+      <audio id="shelf-voice-player" controls hidden></audio>
+      <div class="row">
+        <button type="button" id="btn-shelf-voice-record">🎙 Record voice note</button>
+        <button type="button" id="btn-shelf-voice-delete" class="danger" hidden>Delete voice note</button>
+      </div>
+      <p id="shelf-voice-status" class="small-text muted"></p>
+    </div>
+    <div class="row mt">
+      <button type="button" id="btn-shelf-label" class="primary">QR label</button>
+      <button type="button" id="btn-rename-shelf">Rename</button>
+      <button type="button" id="btn-delete-shelf" class="danger">Delete</button>
+    </div>
+    <h3>Containers on this shelf</h3>
+    <div id="shelf-empty" class="empty-state" hidden>
+      <p class="empty-sub">No containers on this shelf yet. Pick this shelf when you add a container.</p>
+    </div>
+    <ul class="list" id="shelf-containers-list"></ul>
+  </section>
+
+  <!-- Add / rename shelf -->
+  <section class="screen" id="screen-shelf-form" hidden>
+    <h2 id="shelf-form-title" class="center">Add a shelf</h2>
+    <form id="form-shelf">
+      <label for="shelf-name-input">Name <span class="hint">Required. E.g. Shelf 1.</span></label>
+      <input id="shelf-name-input" type="text" dir="auto" required maxlength="120">
+      <p id="shelf-form-error" class="banner" hidden></p>
+      <div class="stack mt">
+        <button type="submit" class="primary" id="btn-save-shelf">Add shelf</button>
+        <button type="button" id="btn-cancel-shelf">Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Settings -->
+  <section class="screen" id="screen-settings" hidden>
+    <h2 class="center">Settings</h2>
+    <p class="section-label">Household</p>
+    <div class="card settings-rows">
+      <div class="settings-row"><span class="settings-key">Signed in as</span><span class="settings-value" id="settings-email" dir="auto">—</span></div>
+    </div>
+    <p class="section-label">Your storage</p>
+    <div class="card settings-rows">
+      <button type="button" class="settings-row" id="btn-settings-containers"><span class="settings-key">Containers</span><span class="settings-value"><span id="settings-count-containers">0</span> <span class="chev">›</span></span></button>
+      <button type="button" class="settings-row" id="btn-settings-items"><span class="settings-key">Items</span><span class="settings-value"><span id="settings-count-items">0</span> <span class="chev">›</span></span></button>
+      <button type="button" class="settings-row" id="btn-settings-categories"><span class="settings-key">Categories</span><span class="settings-value"><span id="settings-count-categories">0</span> <span class="chev">›</span></span></button>
+      <button type="button" class="settings-row" id="btn-settings-shelves"><span class="settings-key">Shelves</span><span class="settings-value"><span id="settings-count-shelves">0</span> <span class="chev">›</span></span></button>
+    </div>
+    <p class="section-label">Display</p>
+    <div class="card settings-rows">
+      <label class="settings-row language-row" for="settings-language">
+        <span class="settings-key">Language</span>
+        <select id="settings-language" aria-label="Language" data-language-choices>
+          <option value="en" lang="en">English</option>
+          <option value="ar" lang="ar">العربية</option>
+          <option value="es" lang="es">Español</option>
+        </select>
+      </label>
+      <button type="button" class="settings-row" id="btn-settings-textsize"><span class="settings-key">Bigger text</span><span class="settings-value" id="settings-textsize-value">Off</span></button>
+      <button type="button" class="settings-row" id="btn-settings-darkmode"><span class="settings-key">Dark mode</span><span class="settings-value" id="settings-darkmode-value">Off</span></button>
+    </div>
+    <p class="section-label">Help</p>
+    <div class="card settings-rows">
+      <button type="button" class="settings-row" id="btn-how"><span class="settings-key">How does it work?</span><span class="chev">›</span></button>
+    </div>
+    <p class="section-label">About</p>
+    <div class="card settings-rows">
+      <div class="settings-row"><span class="settings-key">FindIt</span><span class="settings-value">Shared household app</span></div>
+    </div>
+    <div class="stack mt">
+      <button type="button" id="btn-signout" class="danger">Sign out</button>
+    </div>
+    <p class="small-text muted center">FindIt · shared household app</p>
+  </section>
+</main>
+
+<!-- Bottom navigation -->
+<nav id="bottom-nav" hidden aria-label="Main">
+  <button type="button" class="nav-item" id="nav-home" data-nav="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/></svg><span>Home</span></button>
+  <button type="button" class="nav-item" id="nav-pack" data-nav="pack"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg><span>Pack</span></button>
+  <button type="button" class="nav-item nav-scan-item" id="nav-scan" data-nav="scan"><span class="nav-scan-circle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M16 4h3a1 1 0 0 1 1 1v3"/><path d="M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M4 12h16"/></svg></span><span>Scan</span></button>
+  <button type="button" class="nav-item" id="nav-browse" data-nav="browse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg><span>Browse</span></button>
+  <button type="button" class="nav-item" id="nav-settings" data-nav="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.01a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg><span>Settings</span></button>
+</nav>
+
+<!-- Generic confirm dialog -->
+<dialog id="dlg-confirm">
+  <h2 id="dlg-confirm-title">Are you sure?</h2>
+  <p id="dlg-confirm-text"></p>
+  <div class="actions">
+    <button type="button" id="dlg-confirm-yes" class="danger-solid">Yes, do it</button>
+    <button type="button" id="dlg-confirm-no">Cancel</button>
+  </div>
+</dialog>
+
+<!-- Delete container dialog: two explicit options -->
+<dialog id="dlg-delete-container">
+  <h2 id="dlg-delete-title">Delete container</h2>
+  <p id="dlg-delete-text"></p>
+  <div class="actions">
+    <button type="button" id="dlg-delete-all" class="danger-solid">Delete the container and all its items</button>
+  </div>
+  <div id="dlg-move-out-wrap">
+    <h3>Or clear the items out first</h3>
+    <label for="dlg-move-target">Move all items to another container</label>
+    <select id="dlg-move-target"></select>
+    <div class="actions">
+      <button type="button" id="dlg-move-all">Move all items</button>
+    </div>
+  </div>
+  <p id="dlg-delete-hint" class="small-text muted">You can also remove the items one by one from the container view, then delete the empty container.</p>
+  <div class="actions">
+    <button type="button" id="dlg-delete-cancel">Cancel</button>
+  </div>
+</dialog>
+
+<!-- How it works -->
+<dialog id="dlg-how">
+  <h2>How does it work?</h2>
+  <p>Photograph what goes into a container, give it a title and tags, and save it. The app prints a QR label for the container — stick it on top.</p>
+  <p>Later, scan the label (or search) to see everything inside, with photos. Everyone signs in with their own account and sees only their own containers.</p>
+  <div class="actions">
+    <button type="button" id="btn-how-close" class="primary">Got it</button>
+  </div>
+</dialog>
+
+<!-- Photo viewer -->
+<dialog id="dlg-photo">
+  <img id="dlg-photo-img" class="photo-big" alt="Item photo enlarged">
+  <div class="actions">
+    <button type="button" id="dlg-photo-close">Close</button>
+  </div>
+</dialog>
+
+<div id="toast" role="status"></div>
+<div id="print-area" aria-hidden="true"></div>
+<p id="diag" class="small-text muted" style="padding:12px 14px 148px;">Starting app…</p>
+<script>
+(function () {
+  var diag = document.getElementById('diag');
+  function note(msg) {
+    if (diag && window.FindItI18n) window.FindItI18n.setText(diag, msg);
+    else if (diag) diag.textContent = msg;
+  }
+  window.addEventListener('error', function (e) {
+    note('App error: ' + (e.message || 'unknown') + ' in ' + (e.filename || '') + ':' + (e.lineno || ''));
+  });
+  document.addEventListener('DOMContentLoaded', function () {
+    setTimeout(function () {
+      var anyVisible = false;
+      document.querySelectorAll('.screen').forEach(function (s) { if (!s.hidden) anyVisible = true; });
+      if (anyVisible) { note('App started. Libraries: supabase=' + !!window.supabase + ', scanner=' + !!window.Html5Qrcode + ', qrcode=' + !!window.qrcode + '.'); return; }
+      note('App script did not show a screen. Libraries: supabase=' + !!window.supabase + ', scanner=' + !!window.Html5Qrcode + ', qrcode=' + !!window.qrcode + ', config=' + !!(window.STORAGE_APP_CONFIG && window.STORAGE_APP_CONFIG.SUPABASE_URL && window.STORAGE_APP_CONFIG.SUPABASE_URL.indexOf('YOUR-PROJECT') === -1) + '. Showing the sign-in form.');
+      var login = document.getElementById('screen-login');
+      if (login) login.hidden = false;
+    }, 2000);
+  });
+})();
+</script>
+<script src="https://i.replit.com/script.js" async="" data-website-id="cf2c513b-5a89-41bd-b9dd-5bde97337d25"></script></body>
+</html>
