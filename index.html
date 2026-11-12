@@ -16,7 +16,7 @@
 <script src="/translations.js?v=7" defer></script>
 <script src="/i18n.js?v=7" defer></script>
 <script src="config.js?v=7" defer></script>
-<script src="app.js?v=9" defer></script>
+<script src="app.js?v=10" defer></script>
 <script src="/install.js" defer></script>
   <link rel="stylesheet" crossorigin href="/assets/index-CqMq3Bln.css">
 </head>
@@ -83,6 +83,10 @@
       </div>
     </div>
     <button type="button" id="btn-new-container" class="primary full">+ Add new storage</button>
+    <div class="row mt">
+      <button type="button" id="btn-inventory-report">Inventory report</button>
+      <button type="button" id="btn-join-shared">Join a shared box</button>
+    </div>
     <h2>Containers</h2>
     <div id="home-empty" class="empty-state" hidden>
       <svg class="empty-art" viewBox="0 0 200 170" fill="none" stroke="#a8b6c2" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M50 78 L100 104 L150 78 V132 L100 158 L50 132 Z"/><path d="M50 78 L100 104 L150 78"/><path d="M50 78 L28 46 L76 24 L100 56"/><path d="M150 78 L172 46 L124 24 L100 56"/><path d="M100 104 V158"/></svg>
@@ -139,10 +143,15 @@
     <p class="muted" id="container-shelf-line">Shelf: <strong id="container-shelf"></strong></p>
     <p id="container-note" dir="auto"></p>
     <p class="small-text">Code: <strong id="container-code"></strong></p>
+    <div id="container-fill-wrap" class="fill-wrap" hidden>
+      <div class="fill-bar"><div class="fill-bar-inner" id="container-fill-inner"></div></div>
+      <p class="small-text muted" id="container-fill-text"></p>
+    </div>
     <div id="container-photo-wrap"></div>
     <div class="row mt">
       <button type="button" id="btn-add-item" class="primary">+ Add item</button>
       <button type="button" id="btn-container-label">QR label</button>
+      <button type="button" id="btn-share-container">Share</button>
       <button type="button" id="btn-edit-container">Edit</button>
       <button type="button" id="btn-delete-container" class="danger">Delete</button>
     </div>
@@ -323,6 +332,9 @@
       <label for="container-shelf-select">Shelf <span class="hint">Optional. Pick a shelf to put it on, or leave it blank.</span></label>
       <select id="container-shelf-select"></select>
 
+      <label for="container-capacity-input">Capacity <span class="hint">Optional. How many items fit in this box? The app shows how full it is.</span></label>
+      <input id="container-capacity-input" type="number" min="1" step="1" inputmode="numeric" placeholder="e.g. 20">
+
       <label for="container-location-input">Location <span class="hint">Where the container is kept, e.g. Garage shelf 2.</span></label>
       <input id="container-location-input" type="text" dir="auto" maxlength="120">
 
@@ -396,6 +408,7 @@
     <div class="stack mt">
       <button type="button" class="primary" id="btn-download-label">Download label</button>
       <button type="button" id="btn-print-label">Print label</button>
+      <button type="button" id="btn-pdf-label">PDF (3 sizes)</button>
     </div>
   </section>
 
@@ -505,6 +518,60 @@
     </div>
     <p class="small-text muted center">FindIt · shared household app</p>
   </section>
+
+  <!-- Share a container -->
+  <section class="screen" id="screen-share" hidden>
+    <h2 class="center">Share this box</h2>
+    <p class="muted center" id="share-container-name" dir="auto"></p>
+    <p class="section-label">Access code</p>
+    <div class="card">
+      <p class="small-text">Anyone with this code can see this box and add items to it.</p>
+      <p class="share-code" id="share-code-display">—</p>
+      <div class="stack">
+        <button type="button" id="btn-share-copy-code">Copy code</button>
+        <button type="button" id="btn-share-copy-link">Copy share link</button>
+        <button type="button" id="btn-share-new-code">Make a new code</button>
+      </div>
+    </div>
+    <p class="section-label">Share with an email</p>
+    <div class="card">
+      <label for="share-email-input">Email</label>
+      <input id="share-email-input" type="email" dir="auto" placeholder="name@example.com">
+      <div class="stack mt">
+        <button type="button" id="btn-share-email" class="primary">Share with this email</button>
+      </div>
+      <p id="share-email-error" class="banner" hidden></p>
+    </div>
+    <p class="section-label">Shared with</p>
+    <ul class="list" id="share-list"></ul>
+    <p id="share-list-empty" class="small-text muted">Not shared with anyone yet.</p>
+    <p id="share-error" class="banner" hidden></p>
+    <div class="stack mt">
+      <button type="button" id="btn-share-done" class="primary">Done</button>
+    </div>
+  </section>
+
+  <!-- Join a shared box -->
+  <section class="screen" id="screen-join" hidden>
+    <h2 class="center">Join a shared box</h2>
+    <p class="muted center">Enter the access code the owner gave you.</p>
+    <label for="join-code-input">Access code</label>
+    <input id="join-code-input" type="text" dir="auto" placeholder="e.g. K7Q2XA" maxlength="12">
+    <p id="join-error" class="banner" hidden></p>
+    <div class="stack mt">
+      <button type="button" id="btn-join-submit" class="primary">Join this box</button>
+      <button type="button" id="btn-join-cancel">Cancel</button>
+    </div>
+  </section>
+
+  <!-- Inventory report -->
+  <section class="screen" id="screen-report" hidden>
+    <div id="report-content"></div>
+    <div class="stack mt no-print">
+      <button type="button" id="btn-report-print" class="primary">Save as PDF / Print</button>
+      <button type="button" id="btn-report-back">Back</button>
+    </div>
+  </section>
 </main>
 
 <!-- Bottom navigation -->
@@ -567,6 +634,7 @@
 
 <div id="toast" role="status"></div>
 <div id="print-area" aria-hidden="true"></div>
+<div id="pdf-label-area" aria-hidden="true"></div>
 <p id="diag" class="small-text muted" style="padding:12px 14px 148px;">Starting app…</p>
 <script>
 (function () {
