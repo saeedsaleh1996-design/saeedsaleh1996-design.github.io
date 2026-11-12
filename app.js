@@ -1616,9 +1616,11 @@ async function getOrCreateCategory(name) {
  * photo pick, nothing on QR scan. If Gemini cannot be reached or cannot
  * guess, the button just stops — the fields stay exactly as typed. */
 
-// Paste the Gemini API key here (Google AI Studio, free tier).
-// The key is restricted by HTTP referrer to this site's address.
-const GEMINI_API_KEY = 'AQ.Ab8RN6JRSeAJhyVZbSkMbxIfHB4RnzOzO5FaJmlE-np2QECG9Q';
+// The key is injected at deploy time from the GitHub repo secret
+// GEMINI_API_KEY (never hardcode a real key here — a hardcoded key ends
+// up in the public repo and Google revokes it). The deploy workflow
+// replaces __GEMINI_API_KEY__ with the secret value.
+const GEMINI_API_KEY = '__GEMINI_API_KEY__';
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent';
 const GEMINI_PROMPT =
