@@ -53,7 +53,8 @@ function hideError(boxId) {
 
 const SCREENS = ['setup', 'load-error', 'login', 'home', 'scan', 'unknown-code',
   'container', 'item', 'item-form', 'container-form', 'search', 'categories',
-  'category-items', 'label', 'settings', 'all-items', 'shelves', 'shelf', 'shelf-form'];
+  'category-items', 'label', 'settings', 'all-items', 'shelves', 'shelf', 'shelf-form',
+  'share', 'join', 'report'];
 
 let navStack = [];       // entries: { screen, title }
 let currentScreen = null;
@@ -73,6 +74,7 @@ function showScreen(name) {
  * bar entirely on the sign-in / setup / error screens. */
 const NAV_MAP = {
   home: 'home', container: 'home', item: 'home', label: 'home', 'unknown-code': 'home',
+  share: 'home', join: 'home', report: 'home',
   'item-form': 'pack', 'container-form': 'pack', scan: 'scan',
   search: 'browse', categories: 'browse', 'category-items': 'browse', settings: 'settings',
   'all-items': 'browse', shelves: 'browse', shelf: 'browse', 'shelf-form': 'browse',
@@ -153,6 +155,37 @@ function containersOnShelf(shelfId) {
 }
 function itemsInContainer(containerId) {
   return state.items.filter((i) => i.container_id === containerId);
+}
+
+// Box capacity: how full a container is, from its capacity (the most
+// items it holds) and the total quantity of the items inside it.
+// Returns null when no capacity is set for the container.
+function containerFill(c) {
+  const capacity = c && Number.isInteger(c.capacity) && c.capacity > 0 ? c.capacity : null;
+  if (!capacity) return null;
+  const qty = itemsInContainer(c.id).reduce(
+    (sum, it) => sum + (Number.isInteger(it.quantity) ? it.quantity : 0), 0);
+  const pct = Math.min(100, Math.round((qty / capacity) * 100));
+  return { qty, capacity, pct };
+}
+
+// A "how full" bar for a container, or null when it has no capacity.
+function fillBarEl(c) {
+  const fill = containerFill(c);
+  if (!fill) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'fill-wrap';
+  const bar = document.createElement('div');
+  bar.className = 'fill-bar';
+  const inner = document.createElement('div');
+  inner.className = 'fill-bar-inner' + (fill.pct >= 100 ? ' full' : '');
+  inner.style.width = fill.pct + '%';
+  bar.appendChild(inner);
+  const text = document.createElement('p');
+  text.className = 'small-text muted fill-text';
+  text.textContent = fill.qty + ' of ' + fill.capacity + ' — ' + fill.pct + '% full';
+  wrap.append(bar, text);
+  return wrap;
 }
 function normName(s) { return String(s || '').trim().toLowerCase(); }
 
@@ -263,9 +296,12 @@ async function loadAll() {
   state.dataLoadFailed = false;
   hideError('home-error');
   try {
+    // Containers and items come back through RLS: the user's own rows
+    // plus any container shared with them (and its items). Categories
+    // stay own-only — the dropdown lists the user's own categories.
     const [cRes, iRes, catRes] = await Promise.all([
-      sb.from('containers').select('*').eq('user_id', state.user.id).order('name', { ascending: true }),
-      sb.from('items').select('*, categories(name)').eq('user_id', state.user.id).order('title', { ascending: true }),
+      sb.from('containers').select('*').order('name', { ascending: true }),
+      sb.from('items').select('*, categories(name)').order('title', { ascending: true }),
       sb.from('categories').select('*').eq('user_id', state.user.id).order('name', { ascending: true }),
     ]);
     if (cRes.error) throw cRes.error;
@@ -289,6 +325,14 @@ async function loadAll() {
       }
     } catch (e) { /* shelves table not there yet — ignore */ }
     renderHome();
+    // A ?share=CODE link: offer the join screen once, after sign-in.
+    if (pendingShareCode) {
+      const code = pendingShareCode;
+      pendingShareCode = null;
+      hideError('join-error');
+      el('join-code-input').value = code;
+      go('join');
+    }
   } catch (err) {
     // Never show an empty list as if no containers exist.
     state.dataLoadFailed = true;
@@ -586,12 +630,21 @@ function renderHome() {
     title.className = 'title';
     title.dir = 'auto';
     title.textContent = c.name;
+    // A container shared with this user (not theirs) gets a Shared tag.
+    if (c.user_id && state.user && c.user_id !== state.user.id) {
+      const badge = document.createElement('span');
+      badge.className = 'shared-badge';
+      uiText(badge, 'Shared');
+      title.appendChild(badge);
+    }
     const sub = document.createElement('div');
     sub.className = 'sub';
     const n = itemsInContainer(c.id).length;
     const details = [c.location, c.display_code].filter(Boolean).join('  ·  ');
     uiParts(sub, [details ? details + '  ·  ' : '', { ui: n + (n === 1 ? ' item' : ' items') }]);
     text.append(title, sub);
+    const fill = fillBarEl(c);
+    if (fill) text.appendChild(fill);
     btn.append(photoImgTag(c.photo_path, 'thumb', c.name), dot, text);
     btn.addEventListener('click', () => openContainer(c.id));
     li.appendChild(btn);
@@ -794,6 +847,24 @@ function renderContainer() {
   el('container-note').style.display = c.note ? '' : 'none';
   // Show the display code number, never a raw web address from a sticker.
   el('container-code').textContent = c.display_code || '';
+  // Only the owner can edit, delete or share the container itself.
+  // Anyone it is shared with can still add items to it.
+  const isMine = !c.user_id || !state.user || c.user_id === state.user.id;
+  el('btn-edit-container').style.display = isMine ? '' : 'none';
+  el('btn-delete-container').style.display = isMine ? '' : 'none';
+  el('btn-share-container').style.display = isMine ? '' : 'none';
+  // How full is this box.
+  const fillWrap = el('container-fill-wrap');
+  const fill = containerFill(c);
+  if (fill) {
+    fillWrap.hidden = false;
+    const inner = el('container-fill-inner');
+    inner.style.width = fill.pct + '%';
+    inner.className = 'fill-bar-inner' + (fill.pct >= 100 ? ' full' : '');
+    el('container-fill-text').textContent = fill.qty + ' of ' + fill.capacity + ' — ' + fill.pct + '% full';
+  } else {
+    fillWrap.hidden = true;
+  }
   // Type (Box / Tote / Container) and shelf — the view tells you which
   // shelf to put the container back on.
   uiText(el('container-type'), c.type || 'Container');
@@ -856,8 +927,347 @@ function renderContainer() {
 
 el('btn-add-item').addEventListener('click', () => openItemForm('create', state.currentContainerId));
 el('btn-container-label').addEventListener('click', () => openLabel(state.currentContainerId));
+el('btn-share-container').addEventListener('click', () => openShare(state.currentContainerId));
 el('btn-edit-container').addEventListener('click', () => openContainerForm('edit', state.currentContainerId));
 el('btn-delete-container').addEventListener('click', () => askDeleteContainer(state.currentContainerId));
+
+/* ---------- Sharing a container with others ----------
+ * Two ways, like Storage Box Organizer:
+ *   - Access code: the owner shows a short code; the other person enters
+ *     it in "Join a shared box" and the container appears in their list.
+ *   - Email: the owner types an email; that person sees the container
+ *     as soon as they sign in with that email.
+ * A shared person can view the container and its items and add items to
+ * it. Only the owner can edit, delete or share the container itself.
+ * The database side lives in supabase-sharing-capacity-migration.sql
+ * (container_shares table, RLS, claim_share function). */
+
+const SHARE_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function makeShareCode() {
+  let code = '';
+  const bytes = new Uint8Array(6);
+  if (window.crypto && window.crypto.getRandomValues) {
+    window.crypto.getRandomValues(bytes);
+    for (const b of bytes) code += SHARE_CODE_ALPHABET[b % SHARE_CODE_ALPHABET.length];
+  } else {
+    for (let i = 0; i < 6; i++) code += SHARE_CODE_ALPHABET[Math.floor(Math.random() * SHARE_CODE_ALPHABET.length)];
+  }
+  return code;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (_) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+let shareContainerId = null;
+let shareCodeRow = null; // the container_shares row for the access code
+
+async function openShare(containerId) {
+  const c = containerById(containerId);
+  if (!c) return;
+  shareContainerId = containerId;
+  shareCodeRow = null;
+  hideError('share-error');
+  hideError('share-email-error');
+  el('share-email-input').value = '';
+  uiText(el('share-container-name'), c.name);
+  await refreshShareCode();
+  await renderShareList();
+  go('share');
+}
+
+async function refreshShareCode() {
+  // The access-code share is the row with no email attached.
+  const { data, error } = await sb.from('container_shares')
+    .select('*')
+    .eq('container_id', shareContainerId)
+    .is('shared_with_email', null)
+    .order('created_at', { ascending: true })
+    .limit(1);
+  if (error) { showError('share-error', 'Could not load sharing: ' + error.message); return; }
+  shareCodeRow = data && data[0] ? data[0] : null;
+  el('share-code-display').textContent = shareCodeRow ? shareCodeRow.share_code : '—';
+}
+
+async function ensureShareCode() {
+  if (shareCodeRow) return shareCodeRow;
+  // Make a code; if it collides with another share, try again.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = makeShareCode();
+    const { data, error } = await sb.from('container_shares').insert({
+      container_id: shareContainerId,
+      owner_user_id: state.user.id,
+      share_code: code,
+    }).select().single();
+    if (!error && data) {
+      shareCodeRow = data;
+      el('share-code-display').textContent = code;
+      return data;
+    }
+    if (error && !/duplicate/i.test(String(error.message || ''))) throw error;
+  }
+  throw new Error('Could not make a share code. Try again.');
+}
+
+async function renderShareList() {
+  const list = el('share-list');
+  list.innerHTML = '';
+  const { data, error } = await sb.from('container_shares')
+    .select('*')
+    .eq('container_id', shareContainerId)
+    .order('created_at', { ascending: true });
+  if (error) { showError('share-error', 'Could not load sharing: ' + error.message); return; }
+  const rows = (data || []).filter((r) => r.shared_with_email || r.shared_with_user_id);
+  el('share-list-empty').hidden = rows.length > 0;
+  for (const r of rows) {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'item-row';
+    const text = document.createElement('span');
+    text.className = 'item-text';
+    const title = document.createElement('div');
+    title.className = 'title';
+    title.dir = 'auto';
+    title.textContent = r.shared_with_email || 'Access code';
+    const sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = r.shared_with_user_id ? 'Joined' : 'Invited — waiting for them to sign in';
+    text.append(title, sub);
+    btn.appendChild(text);
+    // Tapping a person stops sharing with them.
+    btn.addEventListener('click', async () => {
+      const ok = await askConfirm('Stop sharing?',
+        'This person will no longer see this box.', 'Stop sharing');
+      if (!ok) return;
+      const { error: delErr } = await sb.from('container_shares').delete().eq('id', r.id);
+      if (delErr) { showError('share-error', 'Could not remove: ' + delErr.message); return; }
+      if (shareCodeRow && shareCodeRow.id === r.id) {
+        shareCodeRow = null;
+        el('share-code-display').textContent = '—';
+      }
+      await renderShareList();
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+
+el('btn-share-copy-code').addEventListener('click', async () => {
+  try {
+    const row = await ensureShareCode();
+    const ok = await copyText(row.share_code);
+    toast(ok ? 'Code copied.' : 'Code: ' + row.share_code);
+  } catch (err) {
+    showError('share-error', 'Could not make a code: ' + (err.message || err));
+  }
+});
+
+el('btn-share-copy-link').addEventListener('click', async () => {
+  try {
+    const row = await ensureShareCode();
+    const link = window.location.origin + window.location.pathname + '?share=' + row.share_code;
+    const ok = await copyText(link);
+    toast(ok ? 'Share link copied.' : 'Link: ' + link);
+  } catch (err) {
+    showError('share-error', 'Could not make a link: ' + (err.message || err));
+  }
+});
+
+el('btn-share-new-code').addEventListener('click', async () => {
+  try {
+    if (shareCodeRow) {
+      const ok = await askConfirm('Make a new code?',
+        'The old code will stop working.', 'Make a new code');
+      if (!ok) return;
+      await sb.from('container_shares').delete().eq('id', shareCodeRow.id);
+      shareCodeRow = null;
+    }
+    await ensureShareCode();
+    await renderShareList();
+  } catch (err) {
+    showError('share-error', 'Could not make a code: ' + (err.message || err));
+  }
+});
+
+el('btn-share-email').addEventListener('click', async () => {
+  hideError('share-email-error');
+  const email = el('share-email-input').value.trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showError('share-email-error', 'Type a valid email address.');
+    return;
+  }
+  if (state.user && email === String(state.user.email || '').toLowerCase()) {
+    showError('share-email-error', 'That is your own email — this box is already yours.');
+    return;
+  }
+  try {
+    const { error } = await sb.from('container_shares').insert({
+      container_id: shareContainerId,
+      owner_user_id: state.user.id,
+      shared_with_email: email,
+      share_code: makeShareCode(),
+    });
+    if (error) throw error;
+    el('share-email-input').value = '';
+    toast('Shared with ' + email + '.');
+    await renderShareList();
+  } catch (err) {
+    showError('share-email-error', 'Could not share: ' + (err.message || err));
+  }
+});
+
+el('btn-share-done').addEventListener('click', () => goBack());
+
+/* ---------- Join a shared box (access code) ---------- */
+let pendingShareCode = null; // from a ?share=CODE link, handled after sign-in
+// A share link looks like https://.../?share=K7Q2XA — remember the code
+// so the join screen can offer it once the user is signed in.
+try {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('share');
+  if (code) pendingShareCode = code.trim().toUpperCase();
+} catch (_) { /* no URL params — ignore */ }
+
+async function joinSharedBox(code) {
+  const clean = String(code || '').trim().toUpperCase();
+  if (!clean) { showError('join-error', 'Type the access code.'); return false; }
+  const { data, error } = await sb.rpc('claim_share', { p_code: clean });
+  if (error) {
+    showError('join-error', 'Could not join: ' + error.message);
+    return false;
+  }
+  if (!data) {
+    showError('join-error', 'No box uses that code. Check the code and try again.');
+    return false;
+  }
+  await refreshData();
+  toast('Joined the shared box.');
+  state.currentContainerId = data;
+  renderContainer();
+  go('container', { replace: true });
+  return true;
+}
+
+el('btn-join-shared').addEventListener('click', () => {
+  hideError('join-error');
+  el('join-code-input').value = pendingShareCode || '';
+  pendingShareCode = null;
+  go('join');
+});
+
+el('btn-join-submit').addEventListener('click', async () => {
+  hideError('join-error');
+  await joinSharedBox(el('join-code-input').value);
+});
+
+el('btn-join-cancel').addEventListener('click', () => goBack());
+
+/* ---------- Inventory report (PDF) ----------
+ * Builds a clean inventory list — every container and what is inside it —
+ * and prints it. On a phone the print dialog offers "Save as PDF", so
+ * the report becomes a PDF file. No extra library: the browser's own
+ * print-to-PDF does it, and the print stylesheet hides the app chrome. */
+function renderReport() {
+  const box = el('report-content');
+  box.innerHTML = '';
+  const title = document.createElement('h2');
+  title.className = 'report-title';
+  title.textContent = 'FindIt — Inventory';
+  const date = document.createElement('p');
+  date.className = 'report-date';
+  date.textContent = new Date().toLocaleDateString(undefined, {
+    year: 'numeric', month: 'long', day: 'numeric',
+  });
+  box.append(title, date);
+  const containers = [...state.containers].sort((a, b) =>
+    String(a.name || '').localeCompare(String(b.name || '')));
+  if (!containers.length) {
+    const p = document.createElement('p');
+    p.className = 'report-empty';
+    p.textContent = 'No containers yet.';
+    box.appendChild(p);
+    return;
+  }
+  for (const c of containers) {
+    const block = document.createElement('div');
+    block.className = 'report-block';
+    const h = document.createElement('h3');
+    h.dir = 'auto';
+    h.textContent = c.name;
+    const meta = document.createElement('p');
+    meta.className = 'report-meta';
+    const fill = containerFill(c);
+    const parts = [
+      c.location || '',
+      c.display_code || '',
+      c.type || '',
+      fill ? fill.qty + ' of ' + fill.capacity + ' (' + fill.pct + '% full)' : '',
+    ].filter(Boolean);
+    meta.textContent = parts.join('  ·  ');
+    block.append(h, meta);
+    const items = itemsInContainer(c.id);
+    if (!items.length) {
+      const p = document.createElement('p');
+      p.className = 'report-empty';
+      p.textContent = 'Empty.';
+      block.appendChild(p);
+    } else {
+      const table = document.createElement('table');
+      table.className = 'report-table';
+      const head = document.createElement('tr');
+      for (const label of ['Item', 'Category', 'Qty', 'Description']) {
+        const th = document.createElement('th');
+        th.textContent = label;
+        head.appendChild(th);
+      }
+      table.appendChild(head);
+      for (const item of items) {
+        const cat = categoryById(item.category_id);
+        const tr = document.createElement('tr');
+        const tdTitle = document.createElement('td');
+        tdTitle.dir = 'auto';
+        tdTitle.textContent = item.title;
+        const tdCat = document.createElement('td');
+        tdCat.textContent = cat ? cat.name : '';
+        const tdQty = document.createElement('td');
+        tdQty.textContent = String(item.quantity);
+        const tdDesc = document.createElement('td');
+        tdDesc.dir = 'auto';
+        tdDesc.textContent = item.description || '';
+        tr.append(tdTitle, tdCat, tdQty, tdDesc);
+        table.appendChild(tr);
+      }
+      block.appendChild(table);
+    }
+    box.appendChild(block);
+  }
+}
+
+el('btn-inventory-report').addEventListener('click', () => {
+  renderReport();
+  go('report');
+});
+
+el('btn-report-print').addEventListener('click', () => window.print());
+el('btn-report-back').addEventListener('click', () => goBack());
 
 /* ---------- QR label ---------- */
 
@@ -977,6 +1387,60 @@ el('btn-download-label').addEventListener('click', () => {
   downloadLabelFile(currentLabel.code, currentLabel.name, currentLabel.displayCode);
 });
 
+// QR label as a PDF with the code in three sizes (small, medium, large),
+// like the Storage Box Organizer export. Builds a print sheet and opens
+// the print dialog — pick "Save as PDF" there to download the PDF file.
+function printLabelPdf() {
+  if (!currentLabel) return;
+  // Clear the single-label print area so only the PDF sheet prints.
+  el('print-area').innerHTML = '';
+  const area = el('pdf-label-area');
+  area.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'pdf-label-header';
+  header.textContent = 'FindIt';
+  area.appendChild(header);
+  const details = document.createElement('div');
+  details.className = 'pdf-label-details';
+  const rows = [];
+  if (currentLabel.kind === 'shelf') {
+    rows.push(['Shelf Name', currentLabel.name]);
+  } else {
+    const c = containerById(state.currentLabelContainerId);
+    rows.push(['Box Name', currentLabel.name]);
+    rows.push(['Description', (c && c.note) || '—']);
+    rows.push(['Location', (c && c.location) || '—']);
+  }
+  rows.push(['Code', currentLabel.displayCode || '']);
+  for (const [label, value] of rows) {
+    const p = document.createElement('p');
+    const b = document.createElement('strong');
+    b.textContent = label + ': ';
+    p.append(b, document.createTextNode(value));
+    details.appendChild(p);
+  }
+  area.appendChild(details);
+  const sizes = [
+    ['Small', 'pdf-qr-small'],
+    ['Medium', 'pdf-qr-medium'],
+    ['Large', 'pdf-qr-large'],
+  ];
+  for (const [label, cls] of sizes) {
+    const block = document.createElement('div');
+    block.className = 'pdf-qr-block ' + cls;
+    const qrWrap = document.createElement('div');
+    qrWrap.innerHTML = qrSvgFor(currentLabel.code);
+    const cap = document.createElement('p');
+    cap.className = 'pdf-qr-caption';
+    cap.textContent = label;
+    block.append(qrWrap, cap);
+    area.appendChild(block);
+  }
+  window.print();
+}
+
+el('btn-pdf-label').addEventListener('click', printLabelPdf);
+
 /* ---------- Container form (create / edit / create-for-scanned-code) ---------- */
 
 let containerFormMode = 'create'; // 'create' | 'edit' | 'for-code'
@@ -1045,6 +1509,7 @@ function openContainerForm(mode, containerId) {
     el('container-name-input').value = c.name;
     el('container-location-input').value = c.location || '';
     el('container-note-input').value = c.note || '';
+    el('container-capacity-input').value = Number.isInteger(c.capacity) && c.capacity > 0 ? String(c.capacity) : '';
     selectedColor = c.label_color || LABEL_COLORS[0];
     renderColorPick();
     setContainerTypePick(c.type || 'Container');
@@ -1155,9 +1620,9 @@ function isMissingColumnError(err) {
 async function insertContainerRow(row) {
   let res = await sb.from('containers').insert(row).select('id').single();
   if (res.error && isMissingColumnError(res.error)) {
-    const { type, shelf_id, ...legacy } = row;
+    const { type, shelf_id, capacity, ...legacy } = row;
     res = await sb.from('containers').insert(legacy).select('id').single();
-    if (!res.error) toast('Saved — type and shelf need the database update to stick.');
+    if (!res.error) toast('Saved — type, shelf and capacity need the database update to stick.');
   }
   return res;
 }
@@ -1165,9 +1630,9 @@ async function insertContainerRow(row) {
 async function updateContainerRow(id, patch) {
   let res = await sb.from('containers').update(patch).eq('id', id).eq('user_id', state.user.id);
   if (res.error && isMissingColumnError(res.error)) {
-    const { type, shelf_id, ...legacy } = patch;
+    const { type, shelf_id, capacity, ...legacy } = patch;
     res = await sb.from('containers').update(legacy).eq('id', id).eq('user_id', state.user.id);
-    if (!res.error) toast('Saved — type and shelf need the database update to stick.');
+    if (!res.error) toast('Saved — type, shelf and capacity need the database update to stick.');
   }
   return res;
 }
@@ -1199,7 +1664,13 @@ el('form-container').addEventListener('submit', async (e) => {
   const note = el('container-note-input').value.trim();
   const storageType = getContainerTypePick();
   const shelfId = getContainerShelfPick();
+  const capacityRaw = el('container-capacity-input').value.trim();
+  const capacity = capacityRaw === '' ? null : parseInt(capacityRaw, 10);
   if (!name) { showError('container-form-error', 'Give the container a name.'); return; }
+  if (capacity !== null && (!Number.isInteger(capacity) || capacity < 1)) {
+    showError('container-form-error', 'Capacity must be a whole number of 1 or more, or left blank.');
+    return;
+  }
 
   const btn = el('btn-save-container');
   btn.disabled = true;
@@ -1220,7 +1691,7 @@ el('form-container').addEventListener('submit', async (e) => {
       }
       const { error } = await updateContainerRow(containerFormId, {
         name, location, note, label_color: selectedColor, photo_path: photoPath,
-        type: storageType, shelf_id: shelfId,
+        type: storageType, shelf_id: shelfId, capacity,
         updated_at: new Date().toISOString(),
       });
       if (error) throw error;
@@ -1249,7 +1720,7 @@ el('form-container').addEventListener('submit', async (e) => {
 
     const { data, error } = await insertContainerRow({
       code, display_code: displayCode, name, location, note, label_color: selectedColor,
-      type: storageType, shelf_id: shelfId,
+      type: storageType, shelf_id: shelfId, capacity,
       user_id: state.user.id,
     });
     if (error) throw error;
@@ -1606,30 +2077,21 @@ async function getOrCreateCategory(name) {
 
 /* ---------- AI suggestion (Gemini, item form only) ----------
  * A "Suggest" button appears in the item form when it has a photo.
- * Tapping it sends the photo straight to Google Gemini from the browser
- * (gemini-3.1-flash-lite) — no server function in between, because
- * the Netlify function was too slow (every call hit its 30s limit).
- * The key is a browser key restricted by HTTP referrer to this site, so
- * it only works from here. It fills in the title, category and a short
- * description as editable suggestions. The photo is shrunk first, the
- * same way it is before upload. Nothing is automatic: no guessing on
- * photo pick, nothing on QR scan. If Gemini cannot be reached or cannot
- * guess, the button just stops — the fields stay exactly as typed. */
+ * Tapping it sends the photo to FindIt's own server function, which
+ * calls Google Gemini and returns a title, category and a short
+ * description as editable suggestions. The Gemini key lives on the
+ * server (a Supabase secret) — it used to sit in this file, visible
+ * in the public site, and Google revoked it twice. The photo is
+ * shrunk first, the same way it is before upload. Nothing is
+ * automatic: no guessing on photo pick, nothing on QR scan. If the
+ * server cannot be reached or cannot guess, the button just stops —
+ * the fields stay exactly as typed. */
 
-// The key is injected at deploy time from the GitHub repo secret
-// GEMINI_API_KEY (never hardcode a real key here — a hardcoded key ends
-// up in the public repo and Google revokes it). The deploy workflow
-// replaces __GEMINI_API_KEY__ with the secret value.
-const GEMINI_API_KEY = '__GEMINI_API_KEY__';
-const GEMINI_MODEL = 'gemini-3.1-flash-lite';
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent';
-const GEMINI_PROMPT =
-  'Look at this photo of one stored item and reply with JSON only, no other text: ' +
-  '{"title": "a short title, a few words, naming the item", ' +
-  '"category": "one short category word, like Tools, Kitchen, Toys, or Clothing", ' +
-  '"description": "one short sentence describing the item"}. ' +
-  'Write the title and description in the same language as any visible text on the item, otherwise English. ' +
-  'If you cannot tell what it is, use your best guess and keep it short.';
+// The server function that runs Gemini (Supabase Edge Function).
+// The key is a secret on the server, never in this file.
+function suggestFunctionUrl() {
+  return sb.supabaseUrl + '/functions/v1/gemini-suggest';
+}
 
 let categoryTouched = false;
 let titleEdited = false; // user typed in the title field this session
@@ -1669,8 +2131,9 @@ function photoToBase64(file) {
   });
 }
 
-// Bound the request and response body, and preserve Google's actual error.
-async function fetchGeminiJson(url, options) {
+// Bound the request and response body, and preserve the server's
+// actual error message.
+async function fetchSuggestJson(url, options) {
   const controller = new AbortController();
   const parentSignal = options.signal;
   const forwardAbort = () => controller.abort();
@@ -1681,7 +2144,7 @@ async function fetchGeminiJson(url, options) {
   let timeout;
   const deadline = new Promise((_, reject) => {
     timeout = setTimeout(() => {
-      reject(new Error('Gemini request timed out after 30 seconds. Please try again.'));
+      reject(new Error('Photo suggestions timed out after 30 seconds. Please try again.'));
       controller.abort();
     }, 30000);
   });
@@ -1693,14 +2156,11 @@ async function fetchGeminiJson(url, options) {
         let data = null;
         try { data = JSON.parse(raw); } catch (_) { /* Report non-JSON errors below. */ }
         if (!res.ok) {
-          const reason = data && data.error && typeof data.error.message === 'string'
-            ? data.error.message
-            : data && typeof data.error === 'string' ? data.error
-            : data && typeof data.message === 'string' ? data.message
-            : raw.trim() || res.statusText || 'Google returned an empty error response.';
-          throw new Error('Gemini HTTP ' + res.status + ': ' + reason);
+          const reason = data && typeof data.error === 'string' ? data.error
+            : raw.trim() || res.statusText || 'The suggestion server returned an empty error response.';
+          throw new Error(reason);
         }
-        if (!data) throw new Error('Gemini HTTP ' + res.status + ': Google returned an unreadable response.');
+        if (!data) throw new Error('The suggestion server returned an unreadable response.');
         return data;
       })(),
       deadline,
@@ -1712,53 +2172,28 @@ async function fetchGeminiJson(url, options) {
   }
 }
 
-// Ask Gemini directly for a title/category/description for one photo.
-// payload is { imageBase64, mimeType }. Returns { title, category,
-// description }; throws when it cannot guess, so the caller just stops.
+// Ask the server-side Suggest function for a title/category/description
+// for one photo. payload is { imageBase64, mimeType }. Returns
+// { title, category, description }; throws when it cannot guess, so the
+// caller just stops. The Gemini key lives on the server, never here.
 async function guessFromPhoto(payload, signal) {
-  if (!GEMINI_API_KEY) throw new Error('No API key.');
   signal.throwIfAborted();
-  const data = await fetchGeminiJson(GEMINI_URL + '?key=' + encodeURIComponent(GEMINI_API_KEY), {
+  const { data: { session } } = await sb.auth.getSession();
+  const token = session && session.access_token;
+  if (!token) throw new Error('Sign in first.');
+  const data = await fetchSuggestJson(suggestFunctionUrl(), {
     method: 'POST',
     signal,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            { inlineData: { mimeType: payload.mimeType, data: payload.imageBase64 } },
-            { text: GEMINI_PROMPT },
-          ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        // Allow room for Gemini's reasoning as well as the final JSON.
-        // A 200-token cap can truncate the reply before it contains a title.
-        maxOutputTokens: 2048,
-      },
-    }),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + token,
+      apikey: window.STORAGE_APP_CONFIG.SUPABASE_ANON_KEY,
+    },
+    body: JSON.stringify(payload),
   });
-  const candidate = data.candidates && data.candidates[0];
-  if (candidate && candidate.finishReason === 'MAX_TOKENS') {
-    throw new Error('Gemini cut the suggestion short. Please try again.');
-  }
-  if (data.promptFeedback && data.promptFeedback.blockReason) {
-    throw new Error('Gemini could not process this photo. Try a different photo.');
-  }
-  const parts = candidate && candidate.content && candidate.content.parts;
-  const text = Array.isArray(parts)
-    ? parts.filter((part) => !part.thought && typeof part.text === 'string')
-      .map((part) => part.text).join('')
-    : '';
-  let parsed = null;
-  if (text) {
-    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-    try { parsed = JSON.parse(cleaned); } catch (err) { parsed = null; }
-  }
-  const title = parsed && typeof parsed.title === 'string' ? parsed.title.trim() : '';
-  const category = parsed && typeof parsed.category === 'string' ? parsed.category.trim() : '';
-  const description = parsed && typeof parsed.description === 'string' ? parsed.description.trim() : '';
+  const title = typeof data.title === 'string' ? data.title.trim() : '';
+  const category = typeof data.category === 'string' ? data.category.trim() : '';
+  const description = typeof data.description === 'string' ? data.description.trim() : '';
   if (!title) throw new Error('Gemini did not return a usable suggestion. Try a clearer photo.');
   return { title, category, description };
 }
