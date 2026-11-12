@@ -1,0 +1,48 @@
+.language-row {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.language-row select {
+  width: auto;
+  max-width: 100%;
+  min-width: 150px;
+  margin: 0;
+  margin-inline-start: auto;
+  padding: 8px 12px;
+  color: var(--ink);
+  background: var(--bg);
+  font: inherit;
+}
+.gs-inner,
+.list button.item-row {
+  text-align: start;
+}
+.settings-value {
+  text-align: end;
+}
+[dir="rtl"] .field-with-mic textarea {
+  padding-right: 12px;
+  padding-left: 48px;
+}
+[dir="rtl"] .dictate-btn {
+  right: auto;
+  left: 8px;
+}
+[dir="rtl"] .photo-pick .plus {
+  left: auto;
+  right: 10px;
+}
+[dir="rtl"] #btn-back,
+[dir="rtl"] .chev {
+  display: inline-block;
+  transform: scaleX(-1);
+}
+[dir="rtl"] .chev {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+[dir="rtl"] .settings-row,
+[dir="rtl"] .radio-text,
+[dir="rtl"] .item-text {
+  text-align: start;
+}
