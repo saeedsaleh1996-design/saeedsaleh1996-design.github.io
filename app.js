@@ -396,7 +396,7 @@ function compressPhoto(file) {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
-      const maxSide = 1200;
+      const maxSide = 1000;
       const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
       const w = Math.max(1, Math.round(img.width * scale));
       const h = Math.max(1, Math.round(img.height * scale));
@@ -408,7 +408,7 @@ function compressPhoto(file) {
       canvas.toBlob((blob) => {
         if (blob) resolve(blob);
         else reject(new Error('Could not process the photo.'));
-      }, 'image/jpeg', 0.82);
+      }, 'image/jpeg', 0.8);
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that photo.')); };
     img.src = url;
@@ -424,6 +424,29 @@ async function uploadPhoto(file, folder) {
     .upload(path, blob, { contentType: 'image/jpeg', upsert: false });
   if (error) throw error;
   return path;
+}
+
+// Upload an item photo AFTER the item is already saved, then attach it
+// to the row. Runs in the background so saving never waits on the photo
+// upload, which is the slow part over a phone connection. The photo shows
+// up in the container view once the upload lands.
+async function uploadPhotoInBackground(itemId, file, oldPhotoPath, containerId) {
+  try {
+    const newPath = await uploadPhoto(file);
+    const { error } = await sb.from('items').update({ photo_path: newPath })
+      .eq('id', itemId).eq('user_id', state.user.id);
+    if (error) throw error;
+    if (oldPhotoPath && oldPhotoPath !== newPath) {
+      await deletePhotoFile(oldPhotoPath);
+    }
+    const idx = state.items.findIndex((it) => it.id === itemId);
+    if (idx >= 0) state.items[idx] = { ...state.items[idx], photo_path: newPath };
+    // Show the photo right away if we are still looking at this container.
+    if (state.currentContainerId === containerId) renderContainer();
+  } catch (err) {
+    console.error('Background photo upload failed', err);
+    toast('Item saved, but the photo did not upload. Open the item and try the photo again.');
+  }
 }
 
 async function deletePhotoFile(path) {
@@ -1152,16 +1175,16 @@ async function updateContainerRow(id, patch) {
 async function saveItemRow(mode, id, row) {
   let res;
   if (mode === 'edit') {
-    res = await sb.from('items').update(row).eq('id', id).eq('user_id', state.user.id);
+    res = await sb.from('items').update(row).eq('id', id).eq('user_id', state.user.id).select();
   } else {
-    res = await sb.from('items').insert(row);
+    res = await sb.from('items').insert(row).select();
   }
   if (res.error && isMissingColumnError(res.error)) {
     const { voice_note_path, ...legacy } = row;
     if (mode === 'edit') {
-      res = await sb.from('items').update(legacy).eq('id', id).eq('user_id', state.user.id);
+      res = await sb.from('items').update(legacy).eq('id', id).eq('user_id', state.user.id).select();
     } else {
-      res = await sb.from('items').insert(legacy);
+      res = await sb.from('items').insert(legacy).select();
     }
     if (!res.error) toast('Item saved, but the voice note needs the database update.');
   }
@@ -1595,7 +1618,7 @@ async function getOrCreateCategory(name) {
 
 // Paste the Gemini API key here (Google AI Studio, free tier).
 // The key is restricted by HTTP referrer to this site's address.
-const GEMINI_API_KEY = '__GEMINI_API_KEY__';
+const GEMINI_API_KEY = 'AQ.Ab8RN6JRSeAJhyVZbSkMbxIfHB4RnzOzO5FaJmlE-np2QECG9Q';
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent';
 const GEMINI_PROMPT =
@@ -2079,19 +2102,15 @@ el('form-item').addEventListener('submit', async (e) => {
 
   const btn = el('btn-save-item');
   btn.disabled = true;
+  // Save the item row FIRST so the save feels instant. The photo upload
+  // is the slow part (it goes to storage over the phone's connection), so
+  // it runs in the background and the photo appears once it lands.
+  const photoFile = itemFormPhotoFile;
+  const oldPhotoPath = itemFormOldPhotoPath;
+  const removePhoto = itemFormRemovePhoto;
+  const photoPath = itemFormMode === 'edit' ? oldPhotoPath : null;
+  const finalPhotoPath = removePhoto ? null : photoPath;
   try {
-    let photoPath = itemFormMode === 'edit' ? itemFormOldPhotoPath : null;
-    if (itemFormPhotoFile) {
-      const newPath = await uploadPhoto(itemFormPhotoFile);
-      if (itemFormOldPhotoPath && itemFormOldPhotoPath !== newPath) {
-        await deletePhotoFile(itemFormOldPhotoPath);
-      }
-      photoPath = newPath;
-    } else if (itemFormRemovePhoto && itemFormOldPhotoPath) {
-      await deletePhotoFile(itemFormOldPhotoPath);
-      photoPath = null;
-    }
-
     let voicePath = itemFormMode === 'edit' ? itemFormOldVoicePath : null;
     if (itemFormVoiceBlob) {
       const newVoicePath = await uploadVoiceNote(itemFormVoiceBlob);
@@ -2111,18 +2130,28 @@ el('form-item').addEventListener('submit', async (e) => {
       description,
       quantity: qty,
       tags,
-      photo_path: photoPath,
+      photo_path: finalPhotoPath,
       voice_note_path: voicePath,
       user_id: state.user.id,
       updated_at: new Date().toISOString(),
     };
-    const { error } = await saveItemRow(itemFormMode, itemFormId, row);
-    if (error) throw error;
-    await refreshData();
+    const res = await saveItemRow(itemFormMode, itemFormId, row);
+    if (res.error) throw res.error;
+    const saved = (res.data && res.data[0]) || { id: itemFormId };
+    // Update the local list right away instead of reloading everything.
+    const idx = state.items.findIndex((it) => it.id === saved.id);
+    if (idx >= 0) state.items[idx] = { ...state.items[idx], ...saved };
+    else state.items.push(saved);
+    if (removePhoto && oldPhotoPath) deletePhotoFile(oldPhotoPath).catch(() => {});
     toast('Item saved.');
     state.currentContainerId = containerId;
     renderContainer();
     go('container', { replace: true });
+    // Photo upload in the background: the item is already saved, the
+    // photo shows up when the upload finishes.
+    if (photoFile) {
+      uploadPhotoInBackground(saved.id, photoFile, oldPhotoPath, containerId);
+    }
   } catch (err) {
     console.error('Save item failed', err);
     showError('item-form-error', 'Could not save the item: ' + (err.message || err) +
