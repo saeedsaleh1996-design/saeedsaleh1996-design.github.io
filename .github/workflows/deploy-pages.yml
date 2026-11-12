@@ -17,10 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inject Gemini API key
-        run: |
-          sed -i 's|__GEMINI_API_KEY__|${{ secrets.GEMINI_API_KEY }}|g' app.js
-          if grep -q '__GEMINI_API_KEY__' app.js; then echo 'key injection failed'; exit 1; fi
+      # No secret is injected into the site any more: the Gemini key
+      # lives on the server (Supabase Edge Function secret), never in
+      # the public site, so Google cannot revoke it from here.
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
