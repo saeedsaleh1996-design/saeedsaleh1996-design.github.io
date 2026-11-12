@@ -1595,7 +1595,7 @@ async function getOrCreateCategory(name) {
 
 // Paste the Gemini API key here (Google AI Studio, free tier).
 // The key is restricted by HTTP referrer to this site's address.
-const GEMINI_API_KEY = 'AQ.Ab8RN6JRSeAJhyVZbSkMbxIfHB4RnzOzO5FaJmlE-np2QECG9Q';
+const GEMINI_API_KEY = '__GEMINI_API_KEY__';
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent';
 const GEMINI_PROMPT =
