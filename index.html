@@ -15,10 +15,10 @@
 <script src="vendor/qrcode.min.js" defer></script>
 <script src="vendor/html2canvas.min.js" defer></script>
 <script src="vendor/jspdf.umd.min.js" defer></script>
-<script src="/translations.js?v=7" defer></script>
+<script src="/translations.js?v=8" defer></script>
 <script src="/i18n.js?v=7" defer></script>
 <script src="config.js?v=7" defer></script>
-<script src="app.js?v=12" defer></script>
+<script src="app.js?v=13" defer></script>
 <script src="/install.js" defer></script>
   <link rel="stylesheet" crossorigin href="/assets/index-CqMq3Bln.css">
   <link rel="stylesheet" href="/styles.css?v=10">
@@ -65,6 +65,9 @@
       <p id="login-error" class="banner" hidden></p>
       <p id="login-info" class="notice" hidden></p>
     </form>
+    <div class="stack" style="margin-top:16px">
+      <button type="button" id="btn-google-signin">Continue with Google</button>
+    </div>
     <p class="small-text muted center" style="margin-top:16px"><a href="privacy-policy.html">Privacy Policy</a></p>
   </section>
 
@@ -487,7 +490,7 @@
     <h2 class="center">Settings</h2>
     <p class="section-label">Household</p>
     <div class="card settings-rows">
-      <div class="settings-row"><span class="settings-key">Signed in as</span><span class="settings-value" id="settings-email" dir="auto">—</span></div>
+      <button type="button" class="settings-row" id="btn-account"><span class="settings-key">Signed in as</span><span class="settings-value"><span id="settings-email" dir="auto">—</span> <span class="chev">›</span></span></button>
     </div>
     <p class="section-label">Your storage</p>
     <div class="card settings-rows">
@@ -523,6 +526,26 @@
       <button type="button" id="btn-delete-account" class="danger-solid">Delete account</button>
     </div>
     <p class="small-text muted center">FindIt · shared household app</p>
+  </section>
+
+  <!-- Account (name + change password) -->
+  <section class="screen" id="screen-account" hidden>
+    <h2 class="center">Account</h2>
+    <p id="account-sub" class="small-text muted center"></p>
+    <form id="form-account">
+      <label for="account-name">Name</label>
+      <input id="account-name" type="text" dir="auto" autocomplete="name" maxlength="120">
+      <label for="account-new-password">New password</label>
+      <input id="account-new-password" type="password" autocomplete="new-password">
+      <label for="account-confirm-password">Confirm new password</label>
+      <input id="account-confirm-password" type="password" autocomplete="new-password">
+      <p class="small-text muted">Leave the password blank to keep your current password.</p>
+      <p id="account-form-error" class="banner" hidden></p>
+      <div class="stack mt">
+        <button type="submit" class="primary" id="btn-save-account">Save</button>
+        <button type="button" id="btn-cancel-account">Cancel</button>
+      </div>
+    </form>
   </section>
 
   <!-- Share a container -->
