@@ -304,6 +304,8 @@ window.FINDIT_TRANSLATIONS = {
   'Could not save: {0}': ['تعذّر الحفظ: {0}', 'No se pudo guardar: {0}'],
   'Continue with Google': ['المتابعة عبر Google', 'Continuar con Google'],
   'Could not sign in with Google: {0}': ['تعذّر تسجيل الدخول عبر Google: {0}', 'No se pudo iniciar sesión con Google: {0}'],
+  'Phone number': ['رقم الهاتف', 'Número de teléfono'],
+  'Enter your name.': ['أدخل اسمك.', 'Escribe tu nombre.'],
   'Your storage': ['مساحات التخزين', 'Tu almacenamiento'],
   'Display': ['العرض', 'Pantalla'],
   'Bigger text': ['نص أكبر', 'Texto más grande'],
