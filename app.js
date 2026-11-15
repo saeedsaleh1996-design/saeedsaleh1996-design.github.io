@@ -330,6 +330,7 @@ function setAuthMode(mode) {
     : 'Sign in with your own account. Everyone sees only their own containers.');
   uiText(el('btn-login-submit'), mode === 'signup' ? 'Create account' : 'Sign in');
   uiText(el('btn-toggle-auth'), mode === 'signup' ? 'Back to sign in' : 'Create an account');
+  el('signup-fields').hidden = (mode !== 'signup');
   el('login-password').setAttribute('autocomplete',
     mode === 'signup' ? 'new-password' : 'current-password');
   hideError('login-error');
@@ -361,11 +362,19 @@ el('form-login').addEventListener('submit', async (e) => {
   const email = el('login-email').value.trim();
   const password = el('login-password').value;
   if (authMode === 'signup') {
+    const name = el('login-name').value.trim();
+    const phone = el('login-phone').value.trim();
+    if (!name) {
+      showError('login-error', 'Enter your name.');
+      return;
+    }
     if (password.length < 6) {
       showError('login-error', 'Choose a password with at least 6 characters.');
       return;
     }
-    const { data, error } = await sb.auth.signUp({ email, password });
+    const metadata = { display_name: name };
+    if (phone) metadata.phone_number = phone;
+    const { data, error } = await sb.auth.signUp({ email, password, options: { data: metadata } });
     if (error) {
       showError('login-error', 'Could not create the account: ' + error.message);
       return;
@@ -3308,9 +3317,17 @@ async function deleteShelf(shelfId) {
 
 /* ---------- Settings ---------- */
 
-function displayName() {
+function userMeta(key) {
   const meta = state.user && state.user.user_metadata;
-  return meta && meta.display_name ? String(meta.display_name).trim() : '';
+  return meta && meta[key] ? String(meta[key]).trim() : '';
+}
+
+function displayName() {
+  return userMeta('display_name');
+}
+
+function phoneNumber() {
+  return userMeta('phone_number');
 }
 
 function renderSettings() {
@@ -3332,15 +3349,16 @@ el('btn-settings-categories').addEventListener('click', () => { renderCategories
 el('btn-settings-shelves').addEventListener('click', () => { renderShelves(); go('shelves'); });
 
 /* ---------- Account (name + change password) ----------
- * Opened by tapping the "Signed in as" row in Settings. The name is saved
- * in the account itself (Supabase Auth user metadata, display_name) — no
- * new table. The password is changed with the same call when one is typed;
- * leave the password blank to keep the current one. Either field may be
- * changed on its own. */
+ * Opened by tapping the "Signed in as" row in Settings. The name and phone
+ * number are saved in the account itself (Supabase Auth user metadata,
+ * display_name and phone_number) — no new table. The password is changed
+ * with the same call when one is typed; leave the password blank to keep
+ * the current one. Any field may be changed on its own. */
 
 function openAccount() {
   if (!state.user) return;
   el('account-name').value = displayName();
+  el('account-phone').value = phoneNumber();
   el('account-new-password').value = '';
   el('account-confirm-password').value = '';
   hideError('account-form-error');
@@ -3356,10 +3374,12 @@ el('form-account').addEventListener('submit', async (e) => {
   if (!state.user) return;
   hideError('account-form-error');
   const name = el('account-name').value.trim();
+  const phone = el('account-phone').value.trim();
   const password = el('account-new-password').value;
   const confirm = el('account-confirm-password').value;
   const nameChanged = name !== displayName();
-  if (!nameChanged && !password) { showError('account-form-error', 'Nothing to change.'); return; }
+  const phoneChanged = phone !== phoneNumber();
+  if (!nameChanged && !phoneChanged && !password) { showError('account-form-error', 'Nothing to change.'); return; }
   if (password) {
     if (password.length < 6) { showError('account-form-error', 'Choose a password with at least 6 characters.'); return; }
     if (password !== confirm) { showError('account-form-error', 'Passwords do not match.'); return; }
@@ -3369,12 +3389,16 @@ el('form-account').addEventListener('submit', async (e) => {
   try {
     const payload = {};
     if (password) payload.password = password;
-    if (nameChanged) payload.data = { display_name: name };
+    if (nameChanged || phoneChanged) {
+      payload.data = {};
+      if (nameChanged) payload.data.display_name = name;
+      if (phoneChanged) payload.data.phone_number = phone;
+    }
     const { data, error } = await sb.auth.updateUser(payload);
     if (error) throw error;
     if (data && data.user) state.user = data.user;
     renderSettings();
-    toast(nameChanged ? 'Profile saved.' : 'Password changed.');
+    toast((nameChanged || phoneChanged) ? 'Profile saved.' : 'Password changed.');
     goBack();
   } catch (err) {
     showError('account-form-error', 'Could not save: ' + (err && err.message ? err.message : 'Try again.'));
