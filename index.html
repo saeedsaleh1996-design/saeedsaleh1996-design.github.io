@@ -15,10 +15,10 @@
 <script src="vendor/qrcode.min.js" defer></script>
 <script src="vendor/html2canvas.min.js" defer></script>
 <script src="vendor/jspdf.umd.min.js" defer></script>
-<script src="/translations.js?v=8" defer></script>
+<script src="/translations.js?v=9" defer></script>
 <script src="/i18n.js?v=7" defer></script>
 <script src="config.js?v=7" defer></script>
-<script src="app.js?v=13" defer></script>
+<script src="app.js?v=14" defer></script>
 <script src="/install.js" defer></script>
   <link rel="stylesheet" crossorigin href="/assets/index-CqMq3Bln.css">
   <link rel="stylesheet" href="/styles.css?v=10">
@@ -53,6 +53,12 @@
     <h2 class="center" id="login-title">Sign in</h2>
     <p id="login-sub">Sign in with your own account. Everyone sees only their own containers.</p>
     <form id="form-login">
+      <div id="signup-fields" hidden>
+        <label for="login-name">Name</label>
+        <input id="login-name" type="text" dir="auto" autocomplete="name" maxlength="120">
+        <label for="login-phone">Phone number</label>
+        <input id="login-phone" type="tel" dir="auto" autocomplete="tel" maxlength="40">
+      </div>
       <label for="login-email">Email</label>
       <input id="login-email" type="email" autocomplete="username" required>
       <label for="login-password">Password</label>
@@ -535,6 +541,8 @@
     <form id="form-account">
       <label for="account-name">Name</label>
       <input id="account-name" type="text" dir="auto" autocomplete="name" maxlength="120">
+      <label for="account-phone">Phone number</label>
+      <input id="account-phone" type="tel" dir="auto" autocomplete="tel" maxlength="40">
       <label for="account-new-password">New password</label>
       <input id="account-new-password" type="password" autocomplete="new-password">
       <label for="account-confirm-password">Confirm new password</label>
