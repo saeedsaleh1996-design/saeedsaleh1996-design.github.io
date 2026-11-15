@@ -742,6 +742,15 @@ async function startScanner(mode) {
   if (scannerRunning || scannerStarting) return;
   scannerStarting = true;
   try {
+    if (isCapacitorApp()) {
+      // The live scanner is the WebView camera (getUserMedia), which
+      // needs the Android CAMERA permission granted first. Asking
+      // through the Camera plugin shows the system prompt; if it is
+      // denied, the catch below shows the photo fallback instead.
+      const Camera = window.Capacitor.registerPlugin('Camera');
+      const perms = await Camera.requestPermissions();
+      if (!perms || perms.camera !== 'granted') throw new Error('Camera permission not granted.');
+    }
     const qr = ensureScanner();
     await qr.start(
       { facingMode: 'environment' },
@@ -1266,8 +1275,230 @@ el('btn-inventory-report').addEventListener('click', () => {
   go('report');
 });
 
-el('btn-report-print').addEventListener('click', () => window.print());
+el('btn-report-print').addEventListener('click', async () => {
+  if (isCapacitorApp()) {
+    try {
+      await saveElementAsPdf(el('report-content'), 'findit-inventory.pdf');
+    } catch (err) {
+      toast('Could not make the PDF. Try again.');
+    }
+    return;
+  }
+  window.print();
+});
 el('btn-report-back').addEventListener('click', () => goBack());
+
+/* ---------- Save as PDF inside the native app (Capacitor) ----------
+ * On the web, "Save as PDF" is the browser print dialog (window.print).
+ * In the Capacitor Android app there is no print dialog, so
+ * window.print() silently does nothing. In the app, the same three
+ * buttons instead build a real PDF file and open the Android share
+ * sheet, where Saeed picks Files, Drive, or any app to save it.
+ * jsPDF + html2canvas are bundled locally in vendor/ (never a CDN).
+ * The report is captured from the screen (browser rendering keeps
+ * Arabic shaping); labels are drawn on a canvas (the same QR drawing
+ * the PNG download already uses), so Arabic names render correctly
+ * in both. Web behavior is untouched: not Capacitor -> window.print(). */
+function isCapacitorApp() {
+  return !!(window.Capacitor && typeof window.Capacitor.getPlatform === 'function'
+    && window.Capacitor.getPlatform() !== 'web');
+}
+
+function pdfLibsReady() {
+  return !!(window.html2canvas && window.jspdf && window.jspdf.jsPDF);
+}
+
+// One tall canvas -> a paginated A4 PDF, saved and shared via the
+// Android share sheet. Files go to the app cache, so nothing is left
+// behind in the user's storage.
+async function shareCanvasAsPdf(canvas, filename) {
+  if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('PDF tools are not ready.');
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const margin = 36;
+  const imgW = pageW - margin * 2;
+  const pxPerPage = Math.max(1, Math.floor(canvas.width * (pageH - margin * 2) / imgW));
+  let y = 0;
+  let first = true;
+  while (y < canvas.height) {
+    const sliceH = Math.min(pxPerPage, canvas.height - y);
+    const pageCanvas = document.createElement('canvas');
+    pageCanvas.width = canvas.width;
+    pageCanvas.height = sliceH;
+    const ctx = pageCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+    ctx.drawImage(canvas, 0, y, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+    if (!first) pdf.addPage();
+    pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, imgW, sliceH * imgW / canvas.width);
+    first = false;
+    y += sliceH;
+  }
+  const base64 = pdf.output('datauristring').split(',')[1];
+  const cap = window.Capacitor;
+  if (!cap || typeof cap.registerPlugin !== 'function') throw new Error('Sharing is not available in this app.');
+  const Filesystem = cap.registerPlugin('Filesystem');
+  const Share = cap.registerPlugin('Share');
+  const saved = await Filesystem.writeFile({ path: filename, data: base64, directory: 'CACHE' });
+  await Share.share({ title: filename, url: saved.uri, dialogTitle: 'Save as PDF' });
+}
+
+async function saveElementAsPdf(element, filename) {
+  if (!pdfLibsReady()) throw new Error('PDF tools are not ready yet. Try again.');
+  const canvas = await window.html2canvas(element, { scale: 2, backgroundColor: '#ffffff' });
+  await shareCanvasAsPdf(canvas, filename);
+}
+
+// QR code as a loaded image plus its pixel size (the same SVG->canvas
+// route the PNG label download uses, so the QR is never clipped).
+function qrImageFor(code) {
+  return new Promise((resolve, reject) => {
+    const qr = qrcode(0, 'M');
+    qr.addData(code);
+    qr.make();
+    const cellSize = 8, margin = 4;
+    const size = qr.getModuleCount() * cellSize + margin * 2;
+    const svgText = qr.createSvgTag({ cellSize, margin, scalable: false });
+    const url = URL.createObjectURL(new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }));
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve({ img, size }); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not draw the QR code.')); };
+    img.src = url;
+  });
+}
+
+// Single label (QR + name + code) drawn on a canvas — the same drawing
+// the PNG download does. Returns the canvas. (Nov 7, 2026 sizing fix:
+// everything sized from the module count — do not change the sizing.)
+async function labelCanvasFor(code, name, displayCode) {
+  const { img, size: qrSize } = await qrImageFor(code);
+  const pad = 40;
+  const canvas = document.createElement('canvas');
+  canvas.width = qrSize + pad * 2;
+  canvas.height = qrSize + pad * 2 + 90;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, pad, pad, qrSize, qrSize);
+  ctx.fillStyle = '#000000';
+  ctx.textAlign = 'center';
+  const fitFont = (text, basePx, weight) => {
+    let px = basePx;
+    ctx.font = (weight ? weight + ' ' : '') + px + 'px sans-serif';
+    const maxW = canvas.width - pad;
+    while (px > 12 && ctx.measureText(text).width > maxW) {
+      px -= 2;
+      ctx.font = (weight ? weight + ' ' : '') + px + 'px sans-serif';
+    }
+  };
+  fitFont(name, 28, 'bold');
+  ctx.fillText(name, canvas.width / 2, qrSize + pad + 34);
+  fitFont(displayCode || '', 24, '');
+  ctx.fillText(displayCode || '', canvas.width / 2, qrSize + pad + 68);
+  return canvas;
+}
+
+// Draw wrapped text on a canvas; returns the y after the last line.
+function drawWrapped(ctx, text, x, y, maxW, lineH) {
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  let line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (line && ctx.measureText(test).width > maxW) {
+      ctx.fillText(line, x, y);
+      y += lineH;
+      line = w;
+    } else {
+      line = test;
+    }
+  }
+  if (line) { ctx.fillText(line, x, y); y += lineH; }
+  return y;
+}
+
+// Label sheet (FindIt header + details + QR in three sizes) drawn on
+// one tall canvas, paginated into the PDF by shareCanvasAsPdf.
+async function labelSheetCanvasFor() {
+  const c = currentLabel.kind === 'shelf' ? null : containerById(state.currentLabelContainerId);
+  const W = 1000, pad = 48;
+  const work = document.createElement('canvas');
+  work.width = W;
+  work.height = 2600;
+  const ctx = work.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, work.height);
+  ctx.fillStyle = '#000000';
+  ctx.textAlign = 'left';
+  let y = pad + 40;
+  ctx.font = '800 40px sans-serif';
+  ctx.fillText('FindIt', pad, y);
+  y += 56;
+  const rows = [];
+  if (currentLabel.kind === 'shelf') {
+    rows.push(['Shelf Name', currentLabel.name]);
+  } else {
+    rows.push(['Box Name', currentLabel.name]);
+    rows.push(['Description', (c && c.note) || '—']);
+    rows.push(['Location', (c && c.location) || '—']);
+  }
+  rows.push(['Code', currentLabel.displayCode || '']);
+  for (const [label, value] of rows) {
+    ctx.font = '700 26px sans-serif';
+    const lw = ctx.measureText(label + ': ').width;
+    ctx.fillText(label + ': ', pad, y);
+    ctx.font = '26px sans-serif';
+    y = drawWrapped(ctx, value, pad + lw, y, W - pad * 2 - lw, 36) + 4;
+  }
+  y += 24;
+  const { img } = await qrImageFor(currentLabel.code);
+  ctx.textAlign = 'center';
+  for (const [label, px] of [['Small', 140], ['Medium', 240], ['Large', 360]]) {
+    ctx.drawImage(img, (W - px) / 2, y, px, px);
+    y += px + 14;
+    ctx.font = '26px sans-serif';
+    ctx.fillText(label, W / 2, y);
+    y += 44;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = Math.min(work.height, y + pad);
+  canvas.getContext('2d').drawImage(work, 0, 0);
+  return canvas;
+}
+
+/* ---------- Camera in the native app (Capacitor) ----------
+ * "Take a photo" on the web clicks a hidden file input with
+ * capture="environment" and the browser opens the camera. In the
+ * Capacitor WebView that input does nothing: the app manifest
+ * declares no CAMERA permission. In the app, both Take a photo
+ * buttons instead open the native camera through the Camera plugin,
+ * which also asks Android for the permission at runtime. The photo
+ * comes back as a File and flows into the same onPhotoChosen /
+ * onContainerPhotoChosen handlers as the file input, so compression,
+ * Suggest and upload work unchanged. Gallery buttons keep the
+ * file-input path everywhere. */
+async function takePhotoWithCamera() {
+  const cap = window.Capacitor;
+  if (!cap || typeof cap.registerPlugin !== 'function') throw new Error('Camera is not available.');
+  const Camera = cap.registerPlugin('Camera');
+  const photo = await Camera.getPhoto({
+    quality: 80,
+    allowEditing: false,
+    resultType: 'uri',
+    source: 'camera',
+  });
+  const url = photo.webPath || (photo.path ? 'file://' + photo.path : null);
+  if (!url) throw new Error('Could not read the photo.');
+  const resp = await fetch(url);
+  const blob = await resp.blob();
+  return new File([blob], 'photo.jpg', { type: blob.type || 'image/jpeg' });
+}
+
+function isCameraCancel(err) {
+  return /cancel/i.test(String((err && err.message) || err || ''));
+}
 
 /* ---------- QR label ---------- */
 
@@ -1311,8 +1542,17 @@ function openShelfLabel(shelfId) {
   openLabelFor('shelf', shelfId);
 }
 
-el('btn-print-label').addEventListener('click', () => {
+el('btn-print-label').addEventListener('click', async () => {
   if (!currentLabel) return;
+  if (isCapacitorApp()) {
+    try {
+      const canvas = await labelCanvasFor(currentLabel.code, currentLabel.name, currentLabel.displayCode);
+      await shareCanvasAsPdf(canvas, 'label-' + (currentLabel.displayCode || 'label').replace(/[^A-Za-z0-9_-]/g, '') + '.pdf');
+    } catch (err) {
+      toast('Could not make the PDF. Try again.');
+    }
+    return;
+  }
   const area = el('print-area');
   area.innerHTML = '';
   const wrap = document.createElement('div');
@@ -1335,39 +1575,7 @@ el('btn-print-label').addEventListener('click', () => {
 // everything from the module count removes the browser guesswork.
 // (Nov 7, 2026 fix — do not change the sizing below.)
 function downloadLabelFile(code, name, displayCode) {
-  const qr = qrcode(0, 'M');
-  qr.addData(code);
-  qr.make();
-  const cellSize = 8, margin = 4;
-  const qrSize = qr.getModuleCount() * cellSize + margin * 2;
-  const svgText = qr.createSvgTag({ cellSize, margin, scalable: false });
-  const svgBlob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(svgBlob);
-  const img = new Image();
-  img.onload = () => {
-    const pad = 40;
-    const canvas = document.createElement('canvas');
-    canvas.width = qrSize + pad * 2;
-    canvas.height = qrSize + pad * 2 + 90;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, pad, pad, qrSize, qrSize);
-    ctx.fillStyle = '#000000';
-    ctx.textAlign = 'center';
-    const fitFont = (text, basePx, weight) => {
-      let px = basePx;
-      ctx.font = (weight ? weight + ' ' : '') + px + 'px sans-serif';
-      const maxW = canvas.width - pad;
-      while (px > 12 && ctx.measureText(text).width > maxW) {
-        px -= 2;
-        ctx.font = (weight ? weight + ' ' : '') + px + 'px sans-serif';
-      }
-    };
-    fitFont(name, 28, 'bold');
-    ctx.fillText(name, canvas.width / 2, qrSize + pad + 34);
-    fitFont(displayCode || '', 24, '');
-    ctx.fillText(displayCode || '', canvas.width / 2, qrSize + pad + 68);
+  labelCanvasFor(code, name, displayCode).then((canvas) => {
     canvas.toBlob((blob) => {
       if (!blob) { toast('Could not make the label file.'); return; }
       const a = document.createElement('a');
@@ -1376,10 +1584,7 @@ function downloadLabelFile(code, name, displayCode) {
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     }, 'image/png');
-    URL.revokeObjectURL(url);
-  };
-  img.onerror = () => { URL.revokeObjectURL(url); toast('Could not make the label file.'); };
-  img.src = url;
+  }).catch(() => toast('Could not make the label file.'));
 }
 
 el('btn-download-label').addEventListener('click', () => {
@@ -1392,6 +1597,12 @@ el('btn-download-label').addEventListener('click', () => {
 // the print dialog — pick "Save as PDF" there to download the PDF file.
 function printLabelPdf() {
   if (!currentLabel) return;
+  if (isCapacitorApp()) {
+    labelSheetCanvasFor()
+      .then((canvas) => shareCanvasAsPdf(canvas, 'label-' + (currentLabel.displayCode || 'label').replace(/[^A-Za-z0-9_-]/g, '') + '-sizes.pdf'))
+      .catch(() => toast('Could not make the PDF. Try again.'));
+    return;
+  }
   // Clear the single-label print area so only the PDF sheet prints.
   el('print-area').innerHTML = '';
   const area = el('pdf-label-area');
@@ -1582,7 +1793,17 @@ function onContainerPhotoChosen(file) {
   el('btn-container-photo-remove').hidden = false;
   updateContainerPackSteps();
 }
-el('btn-container-photo-camera').addEventListener('click', () => el('input-container-photo-camera').click());
+el('btn-container-photo-camera').addEventListener('click', async () => {
+  if (isCapacitorApp()) {
+    try {
+      onContainerPhotoChosen(await takePhotoWithCamera());
+    } catch (err) {
+      if (!isCameraCancel(err)) toast('Could not open the camera. Try again.');
+    }
+    return;
+  }
+  el('input-container-photo-camera').click();
+});
 el('btn-container-photo-gallery').addEventListener('click', () => el('input-container-photo-gallery').click());
 el('input-container-photo-camera').addEventListener('change', (e) => { onContainerPhotoChosen(e.target.files[0]); e.target.value = ''; });
 el('input-container-photo-gallery').addEventListener('change', (e) => { onContainerPhotoChosen(e.target.files[0]); e.target.value = ''; });
@@ -2465,7 +2686,17 @@ function onPhotoChosen(file) {
   updateItemPackSteps();
   updateAiSuggestVisibility();
 }
-el('btn-photo-camera').addEventListener('click', () => el('input-photo-camera').click());
+el('btn-photo-camera').addEventListener('click', async () => {
+  if (isCapacitorApp()) {
+    try {
+      onPhotoChosen(await takePhotoWithCamera());
+    } catch (err) {
+      if (!isCameraCancel(err)) toast('Could not open the camera. Try again.');
+    }
+    return;
+  }
+  el('input-photo-camera').click();
+});
 el('btn-photo-gallery').addEventListener('click', () => el('input-photo-gallery').click());
 el('input-photo-camera').addEventListener('change', (e) => { onPhotoChosen(e.target.files[0]); e.target.value = ''; });
 el('input-photo-gallery').addEventListener('change', (e) => { onPhotoChosen(e.target.files[0]); e.target.value = ''; });
