@@ -53,7 +53,7 @@ function hideError(boxId) {
 
 const SCREENS = ['setup', 'load-error', 'login', 'home', 'scan', 'unknown-code',
   'container', 'item', 'item-form', 'container-form', 'search', 'categories',
-  'category-items', 'label', 'settings', 'all-items', 'shelves', 'shelf', 'shelf-form',
+  'category-items', 'label', 'settings', 'account', 'all-items', 'shelves', 'shelf', 'shelf-form',
   'share', 'join', 'report'];
 
 let navStack = [];       // entries: { screen, title }
@@ -338,6 +338,20 @@ function setAuthMode(mode) {
 
 el('btn-toggle-auth').addEventListener('click', () => {
   setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
+});
+
+// Google sign-in, for both sign-up and sign-in (the button sits outside
+// the email form so it shows in both modes). On success Supabase redirects
+// back here and the session is picked up by initAuth/onAuthStateChange.
+// Needs the Google provider enabled in the Supabase dashboard first —
+// until then this shows the server's error.
+el('btn-google-signin').addEventListener('click', async () => {
+  if (!sb) return;
+  const { error } = await sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin + '/' },
+  });
+  if (error) toast('Could not sign in with Google: ' + error.message);
 });
 
 el('form-login').addEventListener('submit', async (e) => {
@@ -3294,8 +3308,13 @@ async function deleteShelf(shelfId) {
 
 /* ---------- Settings ---------- */
 
+function displayName() {
+  const meta = state.user && state.user.user_metadata;
+  return meta && meta.display_name ? String(meta.display_name).trim() : '';
+}
+
 function renderSettings() {
-  el('settings-email').textContent = state.user ? state.user.email : '—';
+  el('settings-email').textContent = state.user ? (displayName() || state.user.email) : '—';
   el('settings-count-containers').textContent = String(state.containers.length);
   el('settings-count-items').textContent = String(state.items.length);
   el('settings-count-categories').textContent = String(state.categories.length);
@@ -3311,6 +3330,58 @@ el('btn-settings-containers').addEventListener('click', () => { renderHome(); go
 el('btn-settings-items').addEventListener('click', () => { renderAllItems(); go('all-items'); });
 el('btn-settings-categories').addEventListener('click', () => { renderCategories(); go('categories'); });
 el('btn-settings-shelves').addEventListener('click', () => { renderShelves(); go('shelves'); });
+
+/* ---------- Account (name + change password) ----------
+ * Opened by tapping the "Signed in as" row in Settings. The name is saved
+ * in the account itself (Supabase Auth user metadata, display_name) — no
+ * new table. The password is changed with the same call when one is typed;
+ * leave the password blank to keep the current one. Either field may be
+ * changed on its own. */
+
+function openAccount() {
+  if (!state.user) return;
+  el('account-name').value = displayName();
+  el('account-new-password').value = '';
+  el('account-confirm-password').value = '';
+  hideError('account-form-error');
+  uiParts(el('account-sub'), [{ ui: 'Signed in as' }, ' ' + (state.user.email || '')]);
+  go('account');
+}
+
+el('btn-account').addEventListener('click', openAccount);
+el('btn-cancel-account').addEventListener('click', () => goBack());
+
+el('form-account').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!state.user) return;
+  hideError('account-form-error');
+  const name = el('account-name').value.trim();
+  const password = el('account-new-password').value;
+  const confirm = el('account-confirm-password').value;
+  const nameChanged = name !== displayName();
+  if (!nameChanged && !password) { showError('account-form-error', 'Nothing to change.'); return; }
+  if (password) {
+    if (password.length < 6) { showError('account-form-error', 'Choose a password with at least 6 characters.'); return; }
+    if (password !== confirm) { showError('account-form-error', 'Passwords do not match.'); return; }
+  }
+  const btn = el('btn-save-account');
+  btn.disabled = true;
+  try {
+    const payload = {};
+    if (password) payload.password = password;
+    if (nameChanged) payload.data = { display_name: name };
+    const { data, error } = await sb.auth.updateUser(payload);
+    if (error) throw error;
+    if (data && data.user) state.user = data.user;
+    renderSettings();
+    toast(nameChanged ? 'Profile saved.' : 'Password changed.');
+    goBack();
+  } catch (err) {
+    showError('account-form-error', 'Could not save: ' + (err && err.message ? err.message : 'Try again.'));
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 /* ---------- Display preferences (Settings, persisted in localStorage) ---------- */
 
