@@ -126,7 +126,88 @@ el('btn-signout').addEventListener('click', async () => {
   navStack = [];
   showScreen('login');
   el('btn-signout').hidden = true;
+  el('btn-delete-account').hidden = true;
 });
+
+/* ---------- Delete account (Apple Guideline 5.1.1(v)) ----------
+ * Two confirmations, because this is permanent: the account AND all of
+ * its containers, items, shelves and photos are deleted for good. The
+ * actual deleting happens on the server (delete-account Edge Function),
+ * since it needs the service-role key, which must never live in the app.
+ * After the server confirms, the app signs out locally and shows the
+ * sign-in screen. If the server call fails, nothing is deleted and the
+ * user stays signed in. */
+el('btn-delete-account').addEventListener('click', async () => {
+  if (!state.user) return;
+  const first = await askConfirm(
+    'Delete your account?',
+    'This permanently deletes your account and everything in it — all containers, items, shelves and photos. This cannot be undone.',
+    'Delete my account'
+  );
+  if (!first) return;
+  const second = await askConfirm(
+    'Are you really sure?',
+    'Your account and all your data will be gone for good. There is no way to get it back.',
+    'Yes, delete everything'
+  );
+  if (!second) return;
+  const btn = el('btn-delete-account');
+  btn.disabled = true;
+  try {
+    await deleteAccountOnServer();
+  } catch (e) {
+    toast(e && e.message ? e.message : 'Could not delete your account. Please try again.');
+    btn.disabled = false;
+    return;
+  }
+  btn.disabled = false;
+  if (sb) await sb.auth.signOut();
+  state.user = null;
+  navStack = [];
+  showScreen('login');
+  el('btn-signout').hidden = true;
+  el('btn-delete-account').hidden = true;
+  toast('Your account was deleted.');
+});
+
+// Ask the server-side delete-account function to delete the signed-in
+// user's account and all their data. Throws when it cannot, so the
+// caller just stops and the user stays signed in.
+async function deleteAccountOnServer() {
+  const { data: { session } } = await sb.auth.getSession();
+  const token = session && session.access_token;
+  if (!token) throw new Error('Sign in first.');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+  let res;
+  try {
+    res = await fetch(sb.supabaseUrl + '/functions/v1/delete-account', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + token,
+        apikey: window.STORAGE_APP_CONFIG.SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({}),
+    });
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw new Error('Deleting your account timed out. Please try again.');
+    throw new Error('Could not reach the server. Check your connection and try again.');
+  } finally {
+    clearTimeout(timeout);
+  }
+  let data = null;
+  try { data = await res.json(); } catch (_) { /* Non-JSON error. */ }
+  if (!res.ok) {
+    const reason = data && typeof data.error === 'string' ? data.error
+      : (res.statusText || 'The server could not delete your account.');
+    throw new Error(reason);
+  }
+  if (!data || data.deleted !== true) {
+    throw new Error('The server did not confirm the deletion. Please try again.');
+  }
+}
 
 /* ---------- State ---------- */
 
@@ -213,6 +294,7 @@ async function initAuth() {
     state.user = session ? session.user : null;
     if (state.user) {
       el('btn-signout').hidden = false;
+      el('btn-delete-account').hidden = false;
       if (currentScreen === 'login' || !currentScreen) {
         navStack = [];
         showScreen('home');
@@ -220,6 +302,7 @@ async function initAuth() {
       }
     } else {
       el('btn-signout').hidden = true;
+      el('btn-delete-account').hidden = true;
       if (currentScreen !== 'login' && currentScreen !== 'setup') {
         navStack = [];
         showScreen('login');
@@ -229,6 +312,7 @@ async function initAuth() {
 
   if (state.user) {
     el('btn-signout').hidden = false;
+    el('btn-delete-account').hidden = false;
     showScreen('home');
     loadAll();
   } else {
