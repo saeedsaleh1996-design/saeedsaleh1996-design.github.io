@@ -913,8 +913,41 @@ el('input-scan-photo').addEventListener('change', async (e) => {
   }
 });
 
+// A scanned sticker can hold the raw code, a full label URL (old printed
+// labels point at the Netlify address), or the printed STK-/CNT- number.
+// Pull the code out of whatever was scanned.
+function extractScannedCode(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const u = new URL(value);
+      const q = u.searchParams.get('code');
+      if (q) return q.trim();
+      const hash = (u.hash || '').replace(/^#/, '');
+      const hm = hash.match(/(?:^|[?&])code=([^&]+)/);
+      if (hm) return decodeURIComponent(hm[1]).trim();
+      const segs = u.pathname.split('/').filter(Boolean);
+      if (segs.length) return decodeURIComponent(segs[segs.length - 1]).trim();
+    } catch (_) { /* not a parseable URL — use the raw value */ }
+  }
+  return value;
+}
+
+function findContainerOrShelf(code) {
+  const norm = String(code || '').trim();
+  const upper = norm.toUpperCase();
+  const box = state.containers.find((c) => c.code === norm ||
+    (c.display_code && String(c.display_code).toUpperCase() === upper));
+  if (box) return { type: 'container', id: box.id };
+  const shelf = state.shelves.find((s) => s.code === norm ||
+    (s.display_code && String(s.display_code).toUpperCase() === upper));
+  if (shelf) return { type: 'shelf', id: shelf.id };
+  return null;
+}
+
 async function onCodeScanned(code) {
-  const value = String(code || '').trim();
+  const value = extractScannedCode(code);
   if (!value) return;
   await stopScanner();
   el('btn-scan-again').hidden = true;
@@ -927,14 +960,16 @@ async function onCodeScanned(code) {
   }
   // Lookup mode: open the container or shelf, or offer to create one
   // for this code.
-  const found = state.containers.find((c) => c.code === value);
-  if (found) {
-    openContainer(found.id);
-    return;
+  let found = findContainerOrShelf(value);
+  if (!found) {
+    // The list may be stale or still loading — refresh once and try
+    // again before telling the user the code is not linked.
+    try { await refreshData(); } catch (_) { /* keep the first result */ }
+    found = findContainerOrShelf(value);
   }
-  const foundShelf = state.shelves.find((s) => s.code === value);
-  if (foundShelf) {
-    openShelf(foundShelf.id);
+  if (found) {
+    if (found.type === 'container') openContainer(found.id);
+    else openShelf(found.id);
     return;
   }
   pendingStickerCode = value;
