@@ -1417,8 +1417,79 @@ el('btn-inventory-report').addEventListener('click', () => {
   go('report');
 });
 
+/* ---------- Printing ----------
+ * window.print() prints whatever the print stylesheet shows. The three
+ * print areas (single label, multi-size sheet, inventory report) must
+ * never print together — mark which one this print is for, and clear
+ * the mark when the print dialog closes. */
+function markPrintArea(kind) {
+  document.body.classList.remove('printing-label', 'printing-sheet', 'printing-report');
+  document.body.classList.add('printing-' + kind);
+}
+function clearPrintArea() {
+  document.body.classList.remove('printing-label', 'printing-sheet', 'printing-report');
+}
+window.addEventListener('afterprint', clearPrintArea);
+
+// iPhone / iPad: window.print() does nothing when the site runs as a
+// home-screen app (standalone PWA) — the button just sits there. On
+// iOS, open the label/report as a PDF instead; from the PDF viewer,
+// Share → Print works.
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+function isStandalonePWA() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+    (window.navigator && window.navigator.standalone === true);
+}
+function needsPdfPrint() {
+  return isIOS() && isStandalonePWA();
+}
+
+// Open a canvas as a PDF in a new tab (same page-slicing as the native
+// share-as-PDF, so a tall sheet spans pages instead of shrinking).
+// iOS: from the PDF viewer, Share → Print works where window.print()
+// does nothing.
+function openCanvasPdfWeb(canvas, filename) {
+  if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('PDF tools are not ready.');
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const margin = 36;
+  const imgW = pageW - margin * 2;
+  const pxPerPage = Math.max(1, Math.floor(canvas.width * (pageH - margin * 2) / imgW));
+  let y = 0;
+  let first = true;
+  while (y < canvas.height) {
+    const sliceH = Math.min(pxPerPage, canvas.height - y);
+    const pageCanvas = document.createElement('canvas');
+    pageCanvas.width = canvas.width;
+    pageCanvas.height = sliceH;
+    const ctx = pageCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+    ctx.drawImage(canvas, 0, y, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+    if (!first) pdf.addPage();
+    pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, imgW, sliceH * imgW / canvas.width);
+    first = false;
+    y += sliceH;
+  }
+  const blob = pdf.output('blob');
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank');
+  if (!win) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 120000);
+}
+
 el('btn-report-print').addEventListener('click', async () => {
-  if (isCapacitorApp()) {
+  if (isCapacitorApp() || needsPdfPrint()) {
     try {
       await saveElementAsPdf(el('report-content'), 'findit-inventory.pdf');
     } catch (err) {
@@ -1426,6 +1497,7 @@ el('btn-report-print').addEventListener('click', async () => {
     }
     return;
   }
+  markPrintArea('report');
   window.print();
 });
 el('btn-report-back').addEventListener('click', () => goBack());
@@ -1490,7 +1562,11 @@ async function shareCanvasAsPdf(canvas, filename) {
 async function saveElementAsPdf(element, filename) {
   if (!pdfLibsReady()) throw new Error('PDF tools are not ready yet. Try again.');
   const canvas = await window.html2canvas(element, { scale: 2, backgroundColor: '#ffffff' });
-  await shareCanvasAsPdf(canvas, filename);
+  if (isCapacitorApp()) {
+    await shareCanvasAsPdf(canvas, filename);
+  } else {
+    openCanvasPdfWeb(canvas, filename);
+  }
 }
 
 // QR code as a loaded image plus its pixel size (the same SVG->canvas
@@ -1695,8 +1771,18 @@ el('btn-print-label').addEventListener('click', async () => {
     }
     return;
   }
+  if (needsPdfPrint()) {
+    try {
+      const canvas = await labelCanvasFor(currentLabel.code, currentLabel.name, currentLabel.displayCode);
+      openCanvasPdfWeb(canvas, 'label-' + (currentLabel.displayCode || 'label').replace(/[^A-Za-z0-9_-]/g, '') + '.pdf');
+    } catch (err) {
+      toast('Could not make the PDF. Try again.');
+    }
+    return;
+  }
   const area = el('print-area');
   area.innerHTML = '';
+  el('pdf-label-area').innerHTML = ''; // don't let an old sheet print too
   const wrap = document.createElement('div');
   wrap.innerHTML = qrSvgFor(currentLabel.code);
   const name = document.createElement('div');
@@ -1706,6 +1792,7 @@ el('btn-print-label').addEventListener('click', async () => {
   code.className = 'label-code';
   code.textContent = currentLabel.displayCode;
   area.append(wrap, name, code);
+  markPrintArea('label');
   window.print();
 });
 
@@ -1789,6 +1876,13 @@ function printLabelPdf() {
     block.append(qrWrap, cap);
     area.appendChild(block);
   }
+  if (needsPdfPrint()) {
+    labelSheetCanvasFor()
+      .then((canvas) => openCanvasPdfWeb(canvas, 'label-' + (currentLabel.displayCode || 'label').replace(/[^A-Za-z0-9_-]/g, '') + '-sizes.pdf'))
+      .catch(() => toast('Could not make the PDF. Try again.'));
+    return;
+  }
+  markPrintArea('sheet');
   window.print();
 }
 
