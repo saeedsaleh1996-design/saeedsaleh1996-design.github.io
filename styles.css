@@ -724,37 +724,42 @@ body.text-large label .hint { font-size: 16px; }
 #print-area { display: none; }
 #pdf-label-area { display: none; }
 
+/* Only the area the user asked to print is visible in the printout.
+ * (Before this, every print showed all three areas at once, stacked at
+ * the top of the page — so a label could print on top of an old sheet,
+ * or the other way round, and only half of it came out.) The body class
+ * is set just before window.print() and cleared right after. */
 @media print {
   body * { visibility: hidden; }
-  #print-area, #print-area * { visibility: visible; }
-  #print-area {
+  body.printing-label #print-area, body.printing-label #print-area * { visibility: visible; }
+  body.printing-label #print-area {
     display: block;
     position: absolute;
     top: 0; left: 0; width: 100%;
     text-align: center;
     padding-top: 40px;
   }
-  #print-area svg { width: 320px; height: auto; }
-  #print-area .label-name { font-size: 24px; font-weight: 700; margin-top: 16px; }
-  #print-area .label-code { font-size: 22px; margin-top: 6px; }
+  body.printing-label #print-area svg { width: 320px; height: auto; }
+  body.printing-label #print-area .label-name { font-size: 24px; font-weight: 700; margin-top: 16px; }
+  body.printing-label #print-area .label-code { font-size: 22px; margin-top: 6px; }
   /* Inventory report: print the report screen, without its buttons. */
-  #screen-report, #screen-report * { visibility: visible; }
-  #screen-report {
+  body.printing-report #screen-report, body.printing-report #screen-report * { visibility: visible; }
+  body.printing-report #screen-report {
     display: block;
     position: absolute;
     top: 0; left: 0; width: 100%;
   }
-  #screen-report .no-print { display: none; }
-  #screen-report .report-block { break-inside: avoid; }
+  body.printing-report #screen-report .no-print { display: none; }
+  body.printing-report #screen-report .report-block { break-inside: avoid; }
   /* QR label as a PDF: print the multi-size label sheet. */
-  #pdf-label-area, #pdf-label-area * { visibility: visible; }
-  #pdf-label-area {
+  body.printing-sheet #pdf-label-area, body.printing-sheet #pdf-label-area * { visibility: visible; }
+  body.printing-sheet #pdf-label-area {
     display: block;
     position: absolute;
     top: 0; left: 0; width: 100%;
     padding: 24px 32px;
   }
-  #pdf-label-area .pdf-qr-block { break-inside: avoid; margin: 18px 0; }
+  body.printing-sheet #pdf-label-area .pdf-qr-block { break-inside: avoid; margin: 18px 0; }
 }
 
 .detail-grid {
