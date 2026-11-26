@@ -18,7 +18,7 @@
 <script src="/translations.js?v=9" defer></script>
 <script src="/i18n.js?v=7" defer></script>
 <script src="config.js?v=7" defer></script>
-<script src="app.js?v=14" defer></script>
+<script src="app.js?v=15" defer></script>
 <script src="/install.js" defer></script>
   <link rel="stylesheet" crossorigin href="/assets/index-CqMq3Bln.css">
   <link rel="stylesheet" href="/styles.css?v=10">
@@ -681,6 +681,10 @@
     else if (diag) diag.textContent = msg;
   }
   window.addEventListener('error', function (e) {
+    var msg = String(e.message || '');
+    // The scanner library reports a harmless camera-teardown abort after
+    // a successful scan — not a real failure, so don't show it as an app error.
+    if (/onabort|RenderedCameraImpl/i.test(msg)) return;
     note('App error: ' + (e.message || 'unknown') + ' in ' + (e.filename || '') + ':' + (e.lineno || ''));
   });
   document.addEventListener('DOMContentLoaded', function () {
